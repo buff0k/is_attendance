@@ -9,6 +9,8 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
+    "openpyxl>=3.1.0",  # Excel export for Attendance Dashboard
+    "holidays>=0.50",  # South African public holidays (Attendance Compliance Summary)
 ]
 
 [build-system]

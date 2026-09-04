@@ -1,0 +1,223 @@
+{
+ "actions": [],
+ "allow_import": 1,
+ "autoname": "CADJ-.######",
+ "creation": "2026-09-03 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "employee_name",
+  "branch",
+  "column_break_details",
+  "attendance_date",
+  "adjustment_type",
+  "adjustment_section",
+  "log_type",
+  "adjusted_time",
+  "column_break_adjustment",
+  "reference_checkin",
+  "reason_section",
+  "reason",
+  "amended_from",
+  "resulting_checkin",
+  "previous_time",
+  "previous_log_type"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "fetch_from": "employee.employee_name",
+   "fieldname": "employee_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Name",
+   "read_only": 1
+  },
+  {
+   "fetch_from": "employee.branch",
+   "fieldname": "branch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Branch",
+   "options": "Branch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_details",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "attendance_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Attendance Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "adjustment_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Adjustment Type",
+   "options": "Add Missing Checkin\nCorrect Time\nRemove Checkin",
+   "reqd": 1
+  },
+  {
+   "fieldname": "adjustment_section",
+   "fieldtype": "Section Break",
+   "label": "Adjustment"
+  },
+  {
+   "depends_on": "eval:doc.adjustment_type != 'Remove Checkin'",
+   "fieldname": "log_type",
+   "fieldtype": "Select",
+   "label": "Log Type",
+   "mandatory_depends_on": "eval:doc.adjustment_type != 'Remove Checkin'",
+   "options": "IN\nOUT"
+  },
+  {
+   "depends_on": "eval:doc.adjustment_type != 'Remove Checkin'",
+   "fieldname": "adjusted_time",
+   "fieldtype": "Datetime",
+   "label": "Adjusted Time",
+   "mandatory_depends_on": "eval:doc.adjustment_type != 'Remove Checkin'"
+  },
+  {
+   "fieldname": "column_break_adjustment",
+   "fieldtype": "Column Break"
+  },
+  {
+   "depends_on": "eval:doc.adjustment_type != 'Add Missing Checkin'",
+   "description": "The existing Employee Checkin this adjustment corrects or removes. Required for Correct Time / Remove Checkin.",
+   "fieldname": "reference_checkin",
+   "fieldtype": "Link",
+   "label": "Reference Checkin",
+   "mandatory_depends_on": "eval:doc.adjustment_type != 'Add Missing Checkin'",
+   "options": "Employee Checkin"
+  },
+  {
+   "fieldname": "reason_section",
+   "fieldtype": "Section Break",
+   "label": "Reason"
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Small Text",
+   "label": "Reason",
+   "reqd": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Clocking Adjustment",
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "description": "The Employee Checkin this adjustment created (Add) or acted on (Correct/Remove) - set on submit, used on cancel to revert.",
+   "fieldname": "resulting_checkin",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Resulting Checkin",
+   "no_copy": 1,
+   "options": "Employee Checkin",
+   "read_only": 1
+  },
+  {
+   "description": "Snapshot of the reference checkin's time before this adjustment, so on_cancel can restore it (Correct Time / Remove Checkin only).",
+   "fieldname": "previous_time",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Previous Time",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "Snapshot of the reference checkin's log_type before this adjustment, so on_cancel can restore it (Correct Time / Remove Checkin only).",
+   "fieldname": "previous_log_type",
+   "fieldtype": "Select",
+   "hidden": 1,
+   "label": "Previous Log Type",
+   "no_copy": 1,
+   "options": "IN\nOUT",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-09-03 15:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Clocking Adjustment",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "if_owner": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR User",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
