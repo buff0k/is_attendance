@@ -1,7 +1,7 @@
 {
  "app": "is_attendance",
  "charts": [],
- "content": "[{\"id\":\"aTdc1WkQpZ\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Attendance</span>\",\"col\":12}},{\"id\":\"bR7fLmNq3H\",\"type\":\"card\",\"data\":{\"card_name\":\"Attendance Tracking\",\"col\":4}}]",
+ "content": "[{\"id\":\"aTdc1WkQpZ\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Attendance</span>\",\"col\":12}},{\"id\":\"bR7fLmNq3H\",\"type\":\"card\",\"data\":{\"card_name\":\"Attendance Tracking\",\"col\":4}},{\"id\":\"cQ2mZpX9wL\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports & Dashboard\",\"col\":4}},{\"id\":\"dR3nApY0xM\",\"type\":\"card\",\"data\":{\"card_name\":\"Import & Export\",\"col\":4}},{\"id\":\"eS4oBqZ1yN\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}}]",
  "creation": "2026-09-03 09:24:57.000000",
  "custom_blocks": [],
  "docstatus": 0,
@@ -18,7 +18,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Attendance Tracking",
-   "link_count": 2,
+   "link_count": 3,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -42,9 +42,108 @@
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Clocking Adjustment",
+   "link_count": 0,
+   "link_to": "Clocking Adjustment",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Reports & Dashboard",
+   "link_count": 3,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Attendance By Branch",
+   "link_count": 0,
+   "link_to": "Attendance By Branch",
+   "link_type": "Report",
+   "onboard": 0,
+   "report_ref_doctype": "Attendance",
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 1,
+   "label": "Attendance Compliance Summary",
+   "link_count": 0,
+   "link_to": "Attendance Compliance Summary",
+   "link_type": "Report",
+   "onboard": 0,
+   "report_ref_doctype": "Employee Checkin",
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Attendance Dashboard",
+   "link_count": 0,
+   "link_to": "attendance-dashboard",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Import & Export",
+   "link_count": 2,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Clocking DAT Import",
+   "link_count": 0,
+   "link_to": "Clocking DAT Import",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Attendance Export",
+   "link_count": 0,
+   "link_to": "attendance-export",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Settings",
+   "link_count": 1,
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "IS Attendance Settings",
+   "link_count": 0,
+   "link_to": "IS Attendance Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-09-03 09:24:57.000000",
+ "modified": "2026-09-03 19:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Attendance",
@@ -61,6 +160,12 @@
   },
   {
    "role": "HR User"
+  },
+  {
+   "role": "Payroll Manager"
+  },
+  {
+   "role": "Payroll User"
   }
  ],
  "sequence_id": 1.0,

@@ -18,6 +18,9 @@ add_to_apps_screen = [
 fixtures = [
 	{"dt": "Custom Field", "filters": [["name", "in", [
 		"Employee Checkin-isa_branch",
+		"Employee Checkin-isa_clocking_machine",
+		"Employee Checkin-isa_import_doctype",
+		"Employee Checkin-isa_import_reference",
 	]]]},
 ]
 doc_events = {
@@ -34,4 +37,12 @@ scheduler_events = {
 	"daily": [
 		"is_attendance.controllers.attendance_sync.enqueue_daily_sync",
 	],
+}
+permission_query_conditions = {
+	"Employee Checkin": "is_attendance.permissions.employee_checkin_permission_query_conditions",
+	"Clocking Adjustment": "is_attendance.permissions.clocking_adjustment_permission_query_conditions",
+}
+has_permission = {
+	"Employee Checkin": "is_attendance.permissions.employee_checkin_has_permission",
+	"Clocking Adjustment": "is_attendance.permissions.clocking_adjustment_has_permission",
 }

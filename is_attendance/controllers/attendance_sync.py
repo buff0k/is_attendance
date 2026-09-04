@@ -115,7 +115,19 @@ def daily_sync_attendance() -> None:
 def on_employee_checkin(doc, method=None) -> None:
 	"""
 	Recompute attendance after an Employee Checkin is inserted.
+
+	Skipped while `frappe.flags.in_bulk_checkin_import` is set - a bulk
+	importer (Clocking DAT Import, Clocking Adjustment) inserting many
+	Employee Checkins in one request sets this flag and does its own
+	synchronous, deduplicated-per-employee-per-day recompute afterward, so
+	one enqueue per row here would be pure duplicate work and can queue
+	enough background jobs to trip Frappe's own queue-overload guard
+	(`frappe.utils.background_jobs.MAX_QUEUED_JOBS`, default 500) on a
+	single large file.
 	"""
+	if frappe.flags.get("in_bulk_checkin_import"):
+		return
+
 	if not getattr(doc, "employee", None):
 		return
 

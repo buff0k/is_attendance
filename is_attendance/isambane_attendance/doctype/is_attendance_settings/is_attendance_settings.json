@@ -1,0 +1,75 @@
+{
+ "actions": [],
+ "creation": "2026-09-03 12:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "branch_access_tab",
+  "hr_per_branch",
+  "clocking_machines_tab",
+  "clocking_machines"
+ ],
+ "fields": [
+  {
+   "fieldname": "branch_access_tab",
+   "fieldtype": "Tab Break",
+   "label": "Branch Access"
+  },
+  {
+   "description": "Restricts each listed User to only see Employee Checkin / Attendance / Clocking Adjustment records for employees whose home Branch is listed here. A user with no row here is unrestricted (sees every branch).",
+   "fieldname": "hr_per_branch",
+   "fieldtype": "Table",
+   "label": "Responsible HR per Branch",
+   "options": "IS Attendance User Branch"
+  },
+  {
+   "fieldname": "clocking_machines_tab",
+   "fieldtype": "Tab Break",
+   "label": "Clocking Machines"
+  },
+  {
+   "description": "Maps a physical clocking device/terminal ID (as it appears in legacy .DAT rows and in Employee Checkin.device_id from HIKVision) to the Branch it belongs to.",
+   "fieldname": "clocking_machines",
+   "fieldtype": "Table",
+   "label": "Clocking Machines",
+   "options": "IS Attendance Clocking Machine"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-03 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "IS Attendance Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
