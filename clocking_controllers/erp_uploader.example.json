@@ -1,0 +1,30 @@
+{
+  "_comment": "Template only - never contains real credentials, safe to commit. Copy this file to C:\\HikGateway\\ErpUploader\\erp_uploader.json and fill in real values there. erp_uploader.json itself is gitignored (see .gitignore in this folder) so the real one can never be committed by accident. Full docs in README_CON.md.",
+
+  "instances": [
+    {
+      "_comment": "Lab testing instance - safe to enable early.",
+      "name": "eben",
+      "base_url": "https://eben.isambane.co.za",
+      "api_key": "CHANGE_ME",
+      "api_secret": "CHANGE_ME",
+      "enabled": false
+    },
+    {
+      "_comment": "Second lab testing instance.",
+      "name": "jorrie",
+      "base_url": "https://jorrie.isambane.co.za",
+      "api_key": "CHANGE_ME",
+      "api_secret": "CHANGE_ME",
+      "enabled": false
+    },
+    {
+      "_comment": "Production. Leave disabled with blank credentials until eben/jorrie testing is signed off. The moment real api_key/api_secret are filled in and enabled is flipped to true, this instance has no upload-state entry yet, so its very first cycle backfills every CSV that already exists - no separate 'catch up' step needed.",
+      "name": "isambane",
+      "base_url": "https://www.isambane.co.za",
+      "api_key": "CHANGE_ME",
+      "api_secret": "CHANGE_ME",
+      "enabled": false
+    }
+  ]
+}

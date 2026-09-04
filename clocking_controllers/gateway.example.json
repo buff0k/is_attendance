@@ -1,0 +1,22 @@
+{
+  "_comment": "Template only - never contains real credentials, safe to commit. Copy this file to C:\\HikGateway\\gateway.json on the gateway host and fill in real values there. gateway.json itself is gitignored (see .gitignore in this folder) so the real one can never be committed by accident. Full docs in README_CON.md.",
+
+  "default_username": "CHANGE_ME",
+  "default_password": "CHANGE_ME",
+
+  "devices": [
+    {
+      "ip": "192.168.0.101",
+      "label": "TNA-Example-Main-Entrance",
+      "enabled": true
+    },
+    {
+      "_comment": "username/password on a device entry are an OPTIONAL per-device override - only set them when a terminal doesn't share the default_username/default_password above. Omit both to fall back to the defaults.",
+      "ip": "192.168.0.102",
+      "label": "TNA-Example-Side-Door",
+      "enabled": true,
+      "username": "CHANGE_ME_IF_DIFFERENT",
+      "password": "CHANGE_ME_IF_DIFFERENT"
+    }
+  ]
+}

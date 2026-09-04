@@ -1,0 +1,70 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-04 08:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee_code",
+  "machine_id",
+  "occurrence_count",
+  "first_seen",
+  "employee"
+ ],
+ "fields": [
+  {
+   "description": "The badge/PIN number (sJobNo) from the CSV that doesn't match any Employee.attendance_device_id.",
+   "fieldname": "employee_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Employee Code (PIN)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "machine_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Clocking Machine ID",
+   "read_only": 1
+  },
+  {
+   "description": "How many rows in the file carry this code - so you can judge impact before deciding.",
+   "fieldname": "occurrence_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Occurrences",
+   "read_only": 1
+  },
+  {
+   "fieldname": "first_seen",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "First Seen",
+   "read_only": 1
+  },
+  {
+   "description": "Pick the Employee this code belongs to. Saving assigns it to Employee.attendance_device_id permanently, so future imports resolve it automatically.",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-04 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Clocking HIKVision Import Issue",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

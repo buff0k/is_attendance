@@ -1,0 +1,13 @@
+# Real configs hold live credentials - only the .example.json templates
+# are tracked. See README_CON.md.
+gateway.json
+erp_uploader.json
+
+# Runtime state/logs/data - host-local, never meaningful to commit.
+gateway.log
+erp_uploader.log
+state.json
+erp_uploader_state.json
+records/
+logs/
+*.tmp
