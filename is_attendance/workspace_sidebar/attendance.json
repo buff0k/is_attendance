@@ -1,0 +1,89 @@
+{
+ "app": "is_attendance",
+ "creation": "2026-09-03 11:41:40.986343",
+ "docstatus": 0,
+ "doctype": "Workspace Sidebar",
+ "header_icon": "milestone",
+ "idx": 0,
+ "items": [
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "home",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Home",
+   "link_to": "Attendance",
+   "link_type": "Workspace",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "chart-scatter",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Attendance Dashboard",
+   "link_to": "attendance-dashboard",
+   "link_type": "Page",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "id-card",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Clocking Adjustments",
+   "link_to": "Clocking Adjustment",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "import",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Clocking DAT Import",
+   "link_to": "Clocking DAT Import",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "import",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Clocking CSV Import",
+   "link_to": "Clocking CSV Import",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "setting-gear",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Settings",
+   "link_to": "IS Attendance Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  }
+ ],
+ "modified": "2026-09-07 07:27:27.813146",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Attendance",
+ "owner": "Administrator",
+ "standard": 1,
+ "title": "Attendance"
+}

@@ -1,0 +1,82 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-09-04 12:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "checkin",
+  "original_time",
+  "original_log_type",
+  "time",
+  "log_type",
+  "remove"
+ ],
+ "fields": [
+  {
+   "description": "The existing Employee Checkin this row reviews - blank means this row is a new punch to add on submit.",
+   "fieldname": "checkin",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Employee Checkin",
+   "options": "Employee Checkin",
+   "read_only": 1
+  },
+  {
+   "description": "Snapshot of the checkin's time when this period was loaded - blank for a new row.",
+   "fieldname": "original_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Original Time",
+   "read_only": 1
+  },
+  {
+   "description": "Snapshot of the checkin's log type when this period was loaded - blank for a new row.",
+   "fieldname": "original_log_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Original Type",
+   "options": "IN\nOUT",
+   "read_only": 1
+  },
+  {
+   "fieldname": "time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Time",
+   "reqd": 1
+  },
+  {
+   "fieldname": "log_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "IN\nOUT",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Tick to remove this clocking on submit. For a newly added row this simply cancels the addition - row deletion in the grid itself is disabled, this checkbox is the only way to discard a row.",
+   "fieldname": "remove",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Remove"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-04 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Clocking Adjustment Entry",
+ "owner": "Administrator",
+ "permissions": [],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

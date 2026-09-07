@@ -36,6 +36,7 @@ from is_attendance.isambane_attendance.report.attendance_compliance_summary.atte
 	METRICS,
 	compute,
 )
+from is_attendance.permissions import responsible_branches_for_user
 
 # Matches the "Attendance Compliance Summary" Report doctype's own roles -
 # that gate only applies when going through the query-report UI/API, not to
@@ -54,6 +55,7 @@ DAILY_SHEET_COLUMNS = [
 	("hours_worked", "Hours Worked"),
 	("public_holiday", "Public Holiday"),
 	("on_leave", "On Leave"),
+	("half_day_leave", "Half Day Leave"),
 	("missed", "Missed"),
 	("no_out", "No Out"),
 	("no_in", "No In"),
@@ -87,6 +89,35 @@ def export_compliance_excel(filters=None):
 	# .xlsx filename (frappe/utils/response.py::as_raw) rather than a
 	# generic application/octet-stream.
 	frappe.response["type"] = "download"
+
+
+@frappe.whitelist()
+def get_daily_detail(filters=None, employee=None):
+	"""Drill-down data for one employee row on the Dashboard's table -
+	reuses compute() directly (same call export_compliance_excel makes) so
+	this can never disagree with the summary row it expands from.
+
+	employee is checked against responsible_branches_for_user() explicitly
+	because it's a direct argument, not something that went through
+	compute()'s/_resolve_employees()'s own filtering chain - without this a
+	branch-restricted user could ask for another branch's employee by name
+	even though they can't see them in the list this expands from."""
+	if not EXPORT_ROLES & set(frappe.get_roles()):
+		frappe.throw(_("You are not permitted to view this data."), frappe.PermissionError)
+
+	if not employee:
+		frappe.throw(_("Employee is required."))
+
+	branches = responsible_branches_for_user()
+	if branches:
+		employee_branch = frappe.db.get_value("Employee", employee, "branch")
+		if employee_branch not in branches:
+			frappe.throw(_("Not permitted to view this employee's data."), frappe.PermissionError)
+
+	filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or {})
+
+	_summary_rows, daily_detail = compute(filters)
+	return daily_detail.get(employee, [])
 
 
 TIME_FIELDS = {"in_time", "out_time"}
@@ -173,6 +204,7 @@ def _write_daily_sheet(sheet, title: str, day_rows: list[dict]):
 		"hours_worked": 11,
 		"public_holiday": 20,
 		"on_leave": 9,
+		"half_day_leave": 14,
 		"missed": 8,
 		"no_out": 8,
 		"no_in": 8,

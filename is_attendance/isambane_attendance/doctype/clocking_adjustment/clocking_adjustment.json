@@ -9,20 +9,18 @@
   "employee",
   "employee_name",
   "branch",
-  "column_break_details",
-  "attendance_date",
-  "adjustment_type",
-  "adjustment_section",
-  "log_type",
-  "adjusted_time",
-  "column_break_adjustment",
-  "reference_checkin",
+  "company",
+  "letter_head",
+  "column_break_period",
+  "from_date",
+  "to_date",
+  "timeline_section",
+  "checkin_timeline",
+  "checkin_rows",
   "reason_section",
   "reason",
-  "amended_from",
-  "resulting_checkin",
-  "previous_time",
-  "previous_log_type"
+  "signed_adjustment_form",
+  "amended_from"
  ],
  "fields": [
   {
@@ -53,58 +51,65 @@
    "read_only": 1
   },
   {
-   "fieldname": "column_break_details",
+   "description": "The employee's own Company - drives which Letter Head prints on this document, since employees on this site work across several different companies.",
+   "fetch_from": "employee.company",
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1
+  },
+  {
+   "description": "Auto-fetched from the employee's Company - determines the letterhead used when printing this document.",
+   "fetch_from": "company.default_letter_head",
+   "fieldname": "letter_head",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Letter Head",
+   "options": "Letter Head",
+   "print_hide": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_period",
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "attendance_date",
+   "fieldname": "from_date",
    "fieldtype": "Date",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Attendance Date",
+   "label": "From Date",
    "reqd": 1
   },
   {
-   "fieldname": "adjustment_type",
-   "fieldtype": "Select",
+   "description": "A punch just outside this window that belongs to the other half of an overnight shift starting/ending near the boundary won't appear as a row below - load a wider range if reviewing an overnight shift near From/To Date.",
+   "fieldname": "to_date",
+   "fieldtype": "Date",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Adjustment Type",
-   "options": "Add Missing Checkin\nCorrect Time\nRemove Checkin",
+   "label": "To Date",
    "reqd": 1
   },
   {
-   "fieldname": "adjustment_section",
-   "fieldtype": "Section Break",
-   "label": "Adjustment"
+   "fieldname": "timeline_section",
+   "fieldtype": "Section Break"
   },
   {
-   "depends_on": "eval:doc.adjustment_type != 'Remove Checkin'",
-   "fieldname": "log_type",
-   "fieldtype": "Select",
-   "label": "Log Type",
-   "mandatory_depends_on": "eval:doc.adjustment_type != 'Remove Checkin'",
-   "options": "IN\nOUT"
+   "description": "Drag a pin to retime it, click empty track to add a missing punch, use the × on a pin to remove it. IN/OUT is derived automatically from chronological order within each day - it isn't set by hand. Populates automatically once Employee/From Date/To Date are all set.",
+   "fieldname": "checkin_timeline",
+   "fieldtype": "HTML",
+   "label": "Checkins",
+   "print_hide": 1
   },
   {
-   "depends_on": "eval:doc.adjustment_type != 'Remove Checkin'",
-   "fieldname": "adjusted_time",
-   "fieldtype": "Datetime",
-   "label": "Adjusted Time",
-   "mandatory_depends_on": "eval:doc.adjustment_type != 'Remove Checkin'"
-  },
-  {
-   "fieldname": "column_break_adjustment",
-   "fieldtype": "Column Break"
-  },
-  {
-   "depends_on": "eval:doc.adjustment_type != 'Add Missing Checkin'",
-   "description": "The existing Employee Checkin this adjustment corrects or removes. Required for Correct Time / Remove Checkin.",
-   "fieldname": "reference_checkin",
-   "fieldtype": "Link",
-   "label": "Reference Checkin",
-   "mandatory_depends_on": "eval:doc.adjustment_type != 'Add Missing Checkin'",
-   "options": "Employee Checkin"
+   "fieldname": "checkin_rows",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Checkins (Table)",
+   "options": "Clocking Adjustment Entry"
   },
   {
    "fieldname": "reason_section",
@@ -118,6 +123,12 @@
    "reqd": 1
   },
   {
+   "description": "Print this document, get it signed by the Employee, HR, and Manager, then attach the signed copy here - required before this document can be submitted.",
+   "fieldname": "signed_adjustment_form",
+   "fieldtype": "Attach",
+   "label": "Signed Adjustment Form"
+  },
+  {
    "fieldname": "amended_from",
    "fieldtype": "Link",
    "label": "Amended From",
@@ -125,42 +136,13 @@
    "options": "Clocking Adjustment",
    "print_hide": 1,
    "read_only": 1
-  },
-  {
-   "description": "The Employee Checkin this adjustment created (Add) or acted on (Correct/Remove) - set on submit, used on cancel to revert.",
-   "fieldname": "resulting_checkin",
-   "fieldtype": "Link",
-   "hidden": 1,
-   "label": "Resulting Checkin",
-   "no_copy": 1,
-   "options": "Employee Checkin",
-   "read_only": 1
-  },
-  {
-   "description": "Snapshot of the reference checkin's time before this adjustment, so on_cancel can restore it (Correct Time / Remove Checkin only).",
-   "fieldname": "previous_time",
-   "fieldtype": "Datetime",
-   "hidden": 1,
-   "label": "Previous Time",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
-   "description": "Snapshot of the reference checkin's log_type before this adjustment, so on_cancel can restore it (Correct Time / Remove Checkin only).",
-   "fieldname": "previous_log_type",
-   "fieldtype": "Select",
-   "hidden": 1,
-   "label": "Previous Log Type",
-   "no_copy": 1,
-   "options": "IN\nOUT",
-   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-03 15:00:00.000000",
+ "modified": "2026-09-04 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Clocking Adjustment",

@@ -1,0 +1,18 @@
+{
+  "_comment": "Template only - never contains real credentials, safe to commit. Copy this file to C:\\HikGateway\\PayrollController\\sage_employee_puller.json and fill in real values there. The real one is gitignored (see .gitignore in this folder) so it can never be committed by accident. Full docs in README_CON.md.",
+
+  "base_url": "https://eben.isambane.co.za",
+  "api_key": "CHANGE_ME",
+  "api_secret": "CHANGE_ME",
+  "heartbeat_interval_seconds": 60,
+
+  "companies": [
+    {
+      "_comment": "One entry per Sage Company Number - dsn must match a Windows ODBC DSN already configured on this PC (the same one the existing Excel/VBA payroll tooling uses). paypoints are Sage's own PaypointCode values (e.g. 'BKN', 'UADT') - must match what's configured on the matching Sage Payroll Company doctype's Paypoints table in Frappe.",
+      "sage_company_no": "001",
+      "dsn": "VIP_Company001",
+      "paypoints": ["BKN", "UADT"],
+      "enabled": false
+    }
+  ]
+}

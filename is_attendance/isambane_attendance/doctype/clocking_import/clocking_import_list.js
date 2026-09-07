@@ -1,7 +1,7 @@
 // Copyright (c) 2026, BuFf0k and contributors
 // For license information, please see license.txt
 
-frappe.listview_settings["Clocking DAT Import"] = {
+frappe.listview_settings["Clocking Import"] = {
 	add_fields: ["status"],
 	get_indicator(doc) {
 		const status_map = {

@@ -1,0 +1,210 @@
+{
+ "actions": [],
+ "autoname": "SPE-.#####",
+ "creation": "2026-09-04 18:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "sage_payroll_run",
+  "employee_code",
+  "match_status",
+  "column_break_identity",
+  "employee",
+  "branch",
+  "identity_section",
+  "surname",
+  "full_names",
+  "column_break_identity2",
+  "id_number",
+  "occupation",
+  "paypoint_code",
+  "computed_section",
+  "computed_normal_hours",
+  "computed_ot_1_5",
+  "computed_ot_2",
+  "column_break_computed",
+  "leave_hours_annual",
+  "leave_hours_sick",
+  "leave_hours_family"
+ ],
+ "fields": [
+  {
+   "fieldname": "sage_payroll_run",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Sage Payroll Run",
+   "options": "Sage Payroll Run",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "Sage's EMP_INFO_FIXED.EmployeeCode, as pulled by sage_employee_puller.py.",
+   "fieldname": "employee_code",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Sage Employee Code",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "default": "Unmatched",
+   "description": "Matched: employee_code resolved to an Active Employee. Unmatched: no Employee has this code in Employee.attendance_device_id yet - fix it there, then re-run the puller/ingest. Excluded: resolved, but that Employee isn't Active - skipped on export, never silently dropped.",
+   "fieldname": "match_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Match Status",
+   "options": "Matched\nUnmatched\nExcluded",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "read_only": 1
+  },
+  {
+   "fieldname": "branch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Branch",
+   "options": "Branch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "identity_section",
+   "fieldtype": "Section Break",
+   "label": "As Pulled From Sage"
+  },
+  {
+   "fieldname": "surname",
+   "fieldtype": "Data",
+   "label": "Surname",
+   "read_only": 1
+  },
+  {
+   "fieldname": "full_names",
+   "fieldtype": "Data",
+   "label": "Full Names",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_identity2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "id_number",
+   "fieldtype": "Data",
+   "label": "ID Number",
+   "read_only": 1
+  },
+  {
+   "fieldname": "occupation",
+   "fieldtype": "Data",
+   "label": "Occupation",
+   "read_only": 1
+  },
+  {
+   "fieldname": "paypoint_code",
+   "fieldtype": "Data",
+   "label": "Sage Paypoint Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "computed_section",
+   "fieldtype": "Section Break",
+   "label": "Computed From Our Own Clocking / Leave Data"
+  },
+  {
+   "fieldname": "computed_normal_hours",
+   "fieldtype": "Float",
+   "label": "Normal Hours",
+   "read_only": 1
+  },
+  {
+   "description": "Left at 0 - no Overtime 2 trigger rule was found anywhere in the source VBA or process documentation. Flagged, not guessed.",
+   "fieldname": "computed_ot_1_5",
+   "fieldtype": "Float",
+   "label": "Overtime 1.5",
+   "read_only": 1
+  },
+  {
+   "fieldname": "computed_ot_2",
+   "fieldtype": "Float",
+   "label": "Overtime 2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_computed",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "leave_hours_annual",
+   "fieldtype": "Float",
+   "label": "Leave Hours - Annual",
+   "read_only": 1
+  },
+  {
+   "fieldname": "leave_hours_sick",
+   "fieldtype": "Float",
+   "label": "Leave Hours - Sick",
+   "read_only": 1
+  },
+  {
+   "fieldname": "leave_hours_family",
+   "fieldtype": "Float",
+   "label": "Leave Hours - Family",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-04 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Sage Payroll Employee",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Payroll Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Payroll User",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -12,7 +12,7 @@
  ],
  "fields": [
   {
-   "description": "The clocking terminal / device identifier as it appears in legacy .DAT export rows and in Employee Checkin.device_id (HIKVision).",
+   "description": "The clocking terminal / device identifier as it appears in legacy .DAT export rows and in Employee Checkin.device_id (HIKVision). Rows are added here automatically when a Clocking * Import job encounters a device not yet listed - see is_attendance.controllers.clocking_import.sync_clocking_machines.",
    "fieldname": "machine_id",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -22,13 +22,13 @@
    "unique": 1
   },
   {
+   "description": "Left blank on an auto-added row - set this so the device stops falling through to Employee/Fallback Branch resolution. Not required: a blank Branch here simply means this device contributes nothing to Branch resolution, same as if it weren't listed at all.",
    "fieldname": "branch",
    "fieldtype": "Link",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Branch",
-   "options": "Branch",
-   "reqd": 1
+   "options": "Branch"
   },
   {
    "fieldname": "description",
@@ -41,7 +41,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-03 12:00:00.000000",
+ "modified": "2026-09-07 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "IS Attendance Clocking Machine",

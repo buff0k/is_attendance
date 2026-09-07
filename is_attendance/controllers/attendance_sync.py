@@ -124,6 +124,22 @@ def on_employee_checkin(doc, method=None) -> None:
 	enough background jobs to trip Frappe's own queue-overload guard
 	(`frappe.utils.background_jobs.MAX_QUEUED_JOBS`, default 500) on a
 	single large file.
+
+	Recomputes both this checkin's own calendar date AND the day before it.
+	That second one matters for an overnight shift (e.g. 18:00-06:00): its
+	closing OUT checkin lands in the small hours of the *next* calendar
+	day, but _get_shift_window() attributes the whole shift - and the
+	window it uses to find both punches - to the day it *started* on. A
+	single-day recompute here would refresh the day this checkin's own
+	timestamp falls on (correctly finding both punches once both exist),
+	but never revisit the shift's actual start day - so that day's
+	Attendance record would stay frozen at whatever it looked like the
+	moment the employee clocked in (partial hours, no out_time), only
+	self-correcting up to a day later via the nightly daily_sync_attendance
+	scheduled job. Recomputing yesterday too closes that gap in real time;
+	it's a no-op refresh (already-correct numbers recomputed to the same
+	numbers) on every checkin that isn't the tail end of an overnight
+	shift, which is the overwhelming majority of checkins.
 	"""
 	if frappe.flags.get("in_bulk_checkin_import"):
 		return
@@ -136,18 +152,19 @@ def on_employee_checkin(doc, method=None) -> None:
 
 	attendance_date = getdate(doc.time)
 
-	frappe.enqueue(
-		"is_attendance.controllers.attendance_sync."
-		"recompute_attendance_for_employee_day",
-		queue="long",
-		timeout=15 * 60,
-		job_name=(
-			f"is_attendance_recompute_attendance_"
-			f"{doc.employee}_{attendance_date}"
-		),
-		employee=doc.employee,
-		attendance_date=attendance_date,
-	)
+	for target_date in (attendance_date, add_days(attendance_date, -1)):
+		frappe.enqueue(
+			"is_attendance.controllers.attendance_sync."
+			"recompute_attendance_for_employee_day",
+			queue="long",
+			timeout=15 * 60,
+			job_name=(
+				f"is_attendance_recompute_attendance_"
+				f"{doc.employee}_{target_date}"
+			),
+			employee=doc.employee,
+			attendance_date=target_date,
+		)
 
 
 def on_leave_application_change(doc, method=None) -> None:

@@ -5,5 +5,5 @@
 from frappe.model.document import Document
 
 
-class ClockingDATImportCheckin(Document):
+class ClockingImportIssue(Document):
 	pass

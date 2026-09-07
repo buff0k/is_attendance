@@ -1,8 +1,7 @@
 {
  "actions": [],
- "allow_rename": 0,
- "autoname": "CDI-.######",
- "creation": "2026-09-03 12:00:00.000000",
+ "autoname": "CHI-.######",
+ "creation": "2026-09-04 08:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -10,6 +9,7 @@
   "branch",
   "column_break_status",
   "status",
+  "detected_format",
   "counts_section",
   "total_rows",
   "column_break_counts",
@@ -24,16 +24,15 @@
  ],
  "fields": [
   {
-   "allow_on_submit": 0,
-   "description": "The legacy clocking system's .DAT export file. Locked once this import is submitted.",
+   "description": "Either the HIKVision gateway's recordList CSV export (sName, sJobNo, sCard, Date, Time, IN/OUT, ReadID, EventMainCode, EventSubCode, AttendanceStatus, WearMask, SerialNo, ClockStation) or a legacy tab-separated .DAT export - the format is detected automatically from the file's own content (see Detected Format below). Locked once this import is submitted.",
    "fieldname": "file",
    "fieldtype": "Attach",
    "in_list_view": 1,
-   "label": "DAT File",
+   "label": "Clocking Export File",
    "reqd": 1
   },
   {
-   "description": "Checkins always use the employee's own Branch (from their Employee record). This is only a fallback for employees who have no Branch set at all. Leave blank to require every employee in the file to have their own Branch.",
+   "description": "Checkins always use the employee's own Branch (from their Employee record). This is only a fallback for employees who have no Branch set at all - after this, IS Attendance Settings' Clocking Machines mapping is tried as a last resort per checkin's own device. Leave blank to skip straight to that device mapping (or require every employee to have their own Branch, if no device mapping covers them either).",
    "fieldname": "branch",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -53,6 +52,15 @@
    "in_standard_filter": 1,
    "label": "Status",
    "options": "Not Parsed\nMissing Information\nPending Import\nImporting\nCompleted\nError",
+   "read_only": 1
+  },
+  {
+   "description": "Which known shape the attached file was recognised as - see is_attendance.controllers.clocking_parsers.sniff_format(). Blank until the file is parsed.",
+   "fieldname": "detected_format",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Detected Format",
+   "options": "\nCSV\nDAT",
    "read_only": 1
   },
   {
@@ -77,7 +85,7 @@
    "read_only": 1
   },
   {
-   "description": "Employees appearing in this file with no Branch on their own Employee record, and no Fallback Branch set above to cover them. Set a Branch on these Employees, or set a Fallback Branch, to clear this.",
+   "description": "Employees with at least one checkin in this file that can't get a Branch at all - no Branch on their own Employee record, no Fallback Branch set above, and no Branch mapped for that checkin's own device in IS Attendance Settings' Clocking Machines table either. Set a Branch on these Employees, set a Fallback Branch, or map their device(s) in Settings, to clear this.",
    "fieldname": "employees_without_branch",
    "fieldtype": "Small Text",
    "label": "Employees Without a Branch",
@@ -93,7 +101,7 @@
    "fieldname": "issues",
    "fieldtype": "Table",
    "label": "Issues",
-   "options": "Clocking DAT Import Issue"
+   "options": "Clocking Import Issue"
   },
   {
    "fieldname": "log_section",
@@ -112,7 +120,7 @@
    "hidden": 1,
    "label": "Created Checkins",
    "no_copy": 1,
-   "options": "Clocking DAT Import Checkin",
+   "options": "Clocking Import Checkin",
    "read_only": 1
   },
   {
@@ -120,7 +128,7 @@
    "fieldtype": "Link",
    "label": "Amended From",
    "no_copy": 1,
-   "options": "Clocking DAT Import",
+   "options": "Clocking Import",
    "print_hide": 1,
    "read_only": 1
   }
@@ -129,10 +137,10 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-03 18:00:00.000000",
+ "modified": "2026-09-07 08:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
- "name": "Clocking DAT Import",
+ "name": "Clocking Import",
  "owner": "Administrator",
  "permissions": [
   {

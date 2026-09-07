@@ -4,9 +4,9 @@
 const IS_ATTENDANCE_POLL_INTERVAL_MS = 5000;
 const IS_ATTENDANCE_POLL_MAX_TICKS = 360; // ~30 minutes of polling before giving up
 
-frappe.ui.form.on("Clocking DAT Import", {
+frappe.ui.form.on("Clocking Import", {
 	refresh(frm) {
-		is_attendance.clocking_dat_import.stop_polling(frm);
+		is_attendance.clocking_import.stop_polling(frm);
 
 		if (frm.doc.docstatus !== 0) {
 			return;
@@ -35,17 +35,17 @@ frappe.ui.form.on("Clocking DAT Import", {
 			frm.add_custom_button(__("Check File for Issues"), () => frm.save());
 		}
 
-		is_attendance.clocking_dat_import.render_status(frm);
+		is_attendance.clocking_import.render_status(frm);
 
 		if (frm.doc.status === "Importing") {
-			is_attendance.clocking_dat_import.start_polling(frm);
+			is_attendance.clocking_import.start_polling(frm);
 		}
 	},
 });
 
-frappe.provide("is_attendance.clocking_dat_import");
+frappe.provide("is_attendance.clocking_import");
 
-is_attendance.clocking_dat_import.render_status = function (frm) {
+is_attendance.clocking_import.render_status = function (frm) {
 	const status = frm.doc.status;
 
 	if (status === "Missing Information") {
@@ -95,7 +95,7 @@ is_attendance.clocking_dat_import.render_status = function (frm) {
 	}
 };
 
-is_attendance.clocking_dat_import.start_polling = function (frm) {
+is_attendance.clocking_import.start_polling = function (frm) {
 	let ticks = 0;
 	const docname = frm.doc.name;
 
@@ -103,11 +103,11 @@ is_attendance.clocking_dat_import.start_polling = function (frm) {
 		ticks += 1;
 
 		if (ticks > IS_ATTENDANCE_POLL_MAX_TICKS || cur_frm !== frm || frm.docname !== docname) {
-			is_attendance.clocking_dat_import.stop_polling(frm);
+			is_attendance.clocking_import.stop_polling(frm);
 			return;
 		}
 
-		frappe.db.get_value("Clocking DAT Import", docname, ["status", "docstatus"]).then((r) => {
+		frappe.db.get_value("Clocking Import", docname, ["status", "docstatus"]).then((r) => {
 			const values = r.message || {};
 			if (values.status !== frm.doc.status || values.docstatus !== frm.doc.docstatus) {
 				frm.reload_doc();
@@ -116,7 +116,7 @@ is_attendance.clocking_dat_import.start_polling = function (frm) {
 	}, IS_ATTENDANCE_POLL_INTERVAL_MS);
 };
 
-is_attendance.clocking_dat_import.stop_polling = function (frm) {
+is_attendance.clocking_import.stop_polling = function (frm) {
 	if (frm._is_attendance_poll) {
 		clearInterval(frm._is_attendance_poll);
 		frm._is_attendance_poll = null;

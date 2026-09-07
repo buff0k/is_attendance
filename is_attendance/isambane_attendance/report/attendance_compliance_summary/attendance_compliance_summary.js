@@ -25,6 +25,24 @@ frappe.query_reports["Attendance Compliance Summary"] = {
 			options: "Branch",
 		},
 		{
+			fieldname: "department",
+			label: __("Department"),
+			fieldtype: "Link",
+			options: "Department",
+		},
+		{
+			fieldname: "payroll_cost_center",
+			label: __("Payroll Cost Center"),
+			fieldtype: "Link",
+			options: "Cost Center",
+		},
+		{
+			fieldname: "include_inactive",
+			label: __("Include Inactive Employees"),
+			fieldtype: "Check",
+			default: 0,
+		},
+		{
 			fieldname: "from_date",
 			label: __("From Date"),
 			fieldtype: "Date",
