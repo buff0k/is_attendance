@@ -1,0 +1,6 @@
+# Real config holds live credentials - only the .example.json template is
+# tracked. See README_CON.md.
+sage_employee_puller.json
+
+# Runtime log - host-local, never meaningful to commit.
+sage_employee_puller.log

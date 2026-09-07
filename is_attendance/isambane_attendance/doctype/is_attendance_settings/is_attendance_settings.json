@@ -7,7 +7,9 @@
   "branch_access_tab",
   "hr_per_branch",
   "clocking_machines_tab",
-  "clocking_machines"
+  "clocking_machines",
+  "sage_payroll_tab",
+  "leave_type_mapping"
  ],
  "fields": [
   {
@@ -28,18 +30,30 @@
    "label": "Clocking Machines"
   },
   {
-   "description": "Maps a physical clocking device/terminal ID (as it appears in legacy .DAT rows and in Employee Checkin.device_id from HIKVision) to the Branch it belongs to.",
+   "description": "Maps a physical clocking device/terminal ID (as it appears in legacy .DAT rows and in Employee Checkin.device_id from HIKVision) to the Branch it belongs to - used as a last-resort Branch source when a checkin's employee has no Branch of their own and the import it came from has no Fallback Branch set (see is_attendance.controllers.clocking_import's create_checkins). New rows are added here automatically (Branch left blank) whenever a Clocking * Import job completes and encounters a device not already listed - just fill in its Branch, or leave it blank to keep relying on Employee/Fallback Branch for that device.",
    "fieldname": "clocking_machines",
    "fieldtype": "Table",
    "label": "Clocking Machines",
    "options": "IS Attendance Clocking Machine"
+  },
+  {
+   "fieldname": "sage_payroll_tab",
+   "fieldtype": "Tab Break",
+   "label": "Sage Payroll"
+  },
+  {
+   "description": "Maps each Leave Type to the single-letter code Sage VIP Premier expects on a payroll batch import (A = Annual, S = Sick, F = Family Responsibility). Read directly by is_attendance.controllers.sage_payroll - a Leave Type with no row here is simply left out of a Sage Payroll Run's computed leave hours.",
+   "fieldname": "leave_type_mapping",
+   "fieldtype": "Table",
+   "label": "Leave Type → Sage Leave Code",
+   "options": "IS Attendance Sage Leave Mapping"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-03 12:00:00.000000",
+ "modified": "2026-09-07 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "IS Attendance Settings",

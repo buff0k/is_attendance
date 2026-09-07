@@ -82,6 +82,17 @@ def _build_conditions(filters: dict) -> tuple[list[str], list]:
 		conditions.append("`tabAttendance`.`employee` = %s")
 		values.append(filters["employee"])
 
+	if filters.get("department"):
+		conditions.append("`tabEmployee`.`department` = %s")
+		values.append(filters["department"])
+
+	if filters.get("payroll_cost_center"):
+		conditions.append("`tabEmployee`.`payroll_cost_center` = %s")
+		values.append(filters["payroll_cost_center"])
+
+	if not filters.get("include_inactive"):
+		conditions.append("`tabEmployee`.`status` = 'Active'")
+
 	if filters.get("from_date"):
 		conditions.append("`tabAttendance`.`attendance_date` >= %s")
 		values.append(filters["from_date"])

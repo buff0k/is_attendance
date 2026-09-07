@@ -1,6 +1,6 @@
 """
 erp_uploader.py - uploads gateway.py's recordList CSVs to one or more
-Frappe instances as Clocking HIKVision Import documents.
+Frappe instances as Clocking Import documents.
 
 Deliberately separate from gateway.py, which keeps doing exactly what it
 already does (capture from the HIKVision terminals, write CSVs) and knows
@@ -206,7 +206,7 @@ def upload_csv(
     csv_path: Path,
     logger: logging.Logger,
 ) -> str | None:
-    """Upload one CSV as a fresh Clocking HIKVision Import on `instance`.
+    """Upload one CSV as a fresh Clocking Import on `instance`.
 
     Returns the created document's name on success, or None on failure.
     Never modifies csv_path - opened read-only.
@@ -228,7 +228,7 @@ def upload_csv(
         file_url = upload_response.json()["message"]["file_url"]
 
         create_response = requests.post(
-            f"{base_url}/api/resource/Clocking HIKVision Import",
+            f"{base_url}/api/resource/Clocking Import",
             headers={**auth_headers(instance), "Content-Type": "application/json"},
             json={"file": file_url},
             timeout=30,
@@ -278,7 +278,7 @@ def queue_import(
             f"{base_url}/api/method/run_doc_method",
             headers={**auth_headers(instance), "Content-Type": "application/json"},
             json={
-                "dt": "Clocking HIKVision Import",
+                "dt": "Clocking Import",
                 "dn": import_name,
                 "method": "queue_import",
             },
@@ -307,7 +307,7 @@ def retry_pending_imports(instance: dict[str, Any], logger: logging.Logger) -> N
 
     try:
         response = requests.get(
-            f"{base_url}/api/resource/Clocking HIKVision Import",
+            f"{base_url}/api/resource/Clocking Import",
             headers=auth_headers(instance),
             params={
                 "filters": json.dumps(
@@ -361,14 +361,19 @@ def run_upload_cycle() -> None:
     instances = load_instances()
     state = load_state()
 
+    processed_count = 0
+
     for instance in instances:
+        name = instance.get("name")
+
         if not instance.get("enabled"):
+            logging.info("Instance '%s' is disabled - skipping.", name)
             continue
 
         if not instance.get("api_key") or not instance.get("api_secret"):
             logging.warning(
                 "Instance '%s' is enabled but has no api_key/api_secret set - skipping.",
-                instance.get("name"),
+                name,
             )
             continue
 
@@ -380,8 +385,15 @@ def run_upload_cycle() -> None:
             return
 
         upload_cycle_for_instance(instance, state)
+        processed_count += 1
 
     save_state(state)
+
+    logging.info(
+        "Cycle finished: %s/%s instance(s) processed.",
+        processed_count,
+        len(instances),
+    )
 
 
 def main() -> None:

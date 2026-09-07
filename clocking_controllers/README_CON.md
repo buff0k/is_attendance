@@ -8,7 +8,7 @@ plain scripts you deploy to the Windows host and run there.
 | Script | Runs where | Job |
 |---|---|---|
 | `gateway.py` | Windows host, next to the HIKVision terminals | Talks to the terminals (live webhook + history polling), writes daily `recordList_YYYY-MM-DD.csv` files. Knows nothing about Frappe. |
-| `erp_uploader.py` | Same Windows host | Reads those CSVs (read-only, never touches them) and uploads them into one or more Frappe instances as `Clocking HIKVision Import` documents. Knows nothing about the terminals. |
+| `erp_uploader.py` | Same Windows host | Reads those CSVs (read-only, never touches them) and uploads them into one or more Frappe instances as `Clocking Import` documents. Knows nothing about the terminals. |
 
 They're deliberately decoupled: `gateway.py`'s job is "capture reliably," `erp_uploader.py`'s job
 is "get it into the ERP," and neither can break the other.
@@ -41,6 +41,7 @@ C:\HikGateway\
   gateway.json               <- real credentials, from gateway.example.json
   gateway.log                 (created automatically)
   state.json                  (created automatically - IN/OUT shift state)
+  poll_state.json             (created automatically - per-device history poll watermark)
   records\
     recordList_2026-09-04.csv (created automatically, one per day)
     ...
@@ -65,6 +66,18 @@ Runs a small Flask server (port 8080) for live HIKVision webhook events, plus a 
 that polls each terminal's stored event history every 5 minutes as a safety net for anything the
 live webhook missed. Every clocking - live or polled - goes through the same dedup + IN/OUT logic
 and gets appended to that day's CSV.
+
+**History polling window**: the very first successful poll of a device covers the full
+`HISTORY_LOOKBACK_DAYS` (30 days) as a one-time backfill. Every poll after that only asks for
+events since that device's own last successful poll (kept in `poll_state.json`, with a
+15-minute overlap as a safety margin) - not the full 30 days again. This matters: on a device
+with a large event history, repeatedly re-requesting the full window every 5 minutes forever is
+what was causing the mid-pagination `HTTP 401`s seen in testing (the terminal's own digest auth
+session going stale under that much sustained pagination, not a wrong password - it always
+happened after many earlier pages on the same poll had already succeeded). If that still happens
+on an unusually large one-time backfill, `fetch_device_history()` now re-authenticates with a
+fresh session and resumes at the exact same position rather than restarting the search, so one
+stale session doesn't throw away everything already fetched.
 
 **Config** - `gateway.json`, shape documented in `gateway.example.json` and in
 `load_gateway_config()`'s docstring in the script itself:
@@ -100,10 +113,10 @@ Polls every 5 minutes (loop, no server). Each cycle, for every **enabled** insta
 
 1. Looks at every `recordList_*.csv` in `C:\HikGateway\records\`. If that file's size hasn't
    changed since this *instance's* last upload of it, skip it - already sent. Otherwise upload it
-   as a new `Clocking HIKVision Import` document via the REST API, and if the resulting document's
+   as a new `Clocking Import` document via the REST API, and if the resulting document's
    status already reads `Pending Import`, immediately call its `queue_import()` method to run the
    import.
-2. Separately queries that instance for any `Clocking HIKVision Import` still sitting at
+2. Separately queries that instance for any `Clocking Import` still sitting at
    `docstatus=0, status=Pending Import` - this catches documents that started out as `Missing
    Information` (unrecognised employee code, etc.) on an earlier cycle and have since been fixed by
    a person in Desk. The ERP's own `validate()` re-runs on that save and flips status to `Pending
@@ -144,7 +157,7 @@ process supervisor, either works since they never touch each other's files.
 
 ## Frappe-side prerequisite
 
-Each target instance needs an API user with a role that can create `Clocking HIKVision Import`
+Each target instance needs an API user with a role that can create `Clocking Import`
 documents and call its `queue_import()` method (an HR User is sufficient - see that doctype's
 permissions) with an API key/secret generated for it. That key/secret is what goes into
 `erp_uploader.json` for that instance.

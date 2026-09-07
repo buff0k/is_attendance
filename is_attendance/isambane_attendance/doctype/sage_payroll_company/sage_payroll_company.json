@@ -1,0 +1,192 @@
+{
+ "actions": [],
+ "autoname": "field:sage_company_no",
+ "creation": "2026-09-04 18:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "payroll_type",
+  "column_break_identity",
+  "group_code",
+  "sage_company_no",
+  "batch_no",
+  "paypoints_section",
+  "paypoints",
+  "amt_layout_section",
+  "amt_layout_help",
+  "amt_1_source",
+  "amt_2_source",
+  "amt_3_source",
+  "column_break_amt",
+  "amt_4_source",
+  "amt_5_source",
+  "amt_6_source",
+  "include_totals_line"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "description": "Sage VIP Premier only has 2 payrolls per Frappe Company (Monthly/Salaried employees are on one, Hourly/Wage employees on the other) - Senior/Executive Management sit outside both and are never part of a Sage-sourced pull.",
+   "fieldname": "payroll_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Payroll Type",
+   "options": "Monthly\nHourly",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Sage's own top-level tenant code (e.g. \"A3T\" for Isambane, \"XCA\" for Excavo) - informational only, not used in the batch import file itself.",
+   "fieldname": "group_code",
+   "fieldtype": "Data",
+   "label": "Sage Group Code"
+  },
+  {
+   "description": "Sage's 3-digit Company Number for this payroll (e.g. \"001\") - written zero-padded as the CoNo field of every line in the generated .txt, and used to name the Windows-host ODBC DSN this payroll's employee data is pulled from (\"VIP_Company\" + this value).",
+   "fieldname": "sage_company_no",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Sage Company Number",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "1-character batch number/letter (1-9 or A-Z), written as the BatNo field of every line in the generated .txt.",
+   "fieldname": "batch_no",
+   "fieldtype": "Data",
+   "label": "Batch Number",
+   "reqd": 1
+  },
+  {
+   "fieldname": "paypoints_section",
+   "fieldtype": "Section Break",
+   "label": "Paypoints"
+  },
+  {
+   "description": "Every Sage Paypoint that rolls up into this Company Number, and the Branch each maps to. sage_employee_puller.py (the Windows-host bridge script) queries Sage once per Paypoint listed here; is_attendance.controllers.sage_payroll.ingest_employees() uses this same mapping to resolve each pulled employee's Branch.",
+   "fieldname": "paypoints",
+   "fieldtype": "Table",
+   "label": "Paypoints",
+   "options": "Sage Payroll Company Paypoint"
+  },
+  {
+   "fieldname": "amt_layout_section",
+   "fieldtype": "Section Break",
+   "label": "Batch Column Layout (Amt 1-6)"
+  },
+  {
+   "fieldname": "amt_layout_help",
+   "fieldtype": "HTML",
+   "options": "<div class=\"text-muted small\">What each of the 6 generic amount columns in Sage's batch import format holds, for this payroll - matches the flexible column choice the original VBA batch-import tool prompted for interactively, pre-configured here instead. Only the values proven this session (worked hours + the 3 leave-hour buckets) are offered - <b>allowance/baseline columns aren't included because no evidence was found of them being sourced live from Sage</b>; add them here once a real source is confirmed.</div>"
+  },
+  {
+   "fieldname": "amt_1_source",
+   "fieldtype": "Select",
+   "label": "Amt 1",
+   "options": "Blank/Unused\nNormal Hours\nOvertime 1.5\nOvertime 2\nLeave Hours - Annual\nLeave Hours - Sick\nLeave Hours - Family",
+   "default": "Blank/Unused"
+  },
+  {
+   "fieldname": "amt_2_source",
+   "fieldtype": "Select",
+   "label": "Amt 2",
+   "options": "Blank/Unused\nNormal Hours\nOvertime 1.5\nOvertime 2\nLeave Hours - Annual\nLeave Hours - Sick\nLeave Hours - Family",
+   "default": "Blank/Unused"
+  },
+  {
+   "fieldname": "amt_3_source",
+   "fieldtype": "Select",
+   "label": "Amt 3",
+   "options": "Blank/Unused\nNormal Hours\nOvertime 1.5\nOvertime 2\nLeave Hours - Annual\nLeave Hours - Sick\nLeave Hours - Family",
+   "default": "Blank/Unused"
+  },
+  {
+   "fieldname": "column_break_amt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "amt_4_source",
+   "fieldtype": "Select",
+   "label": "Amt 4",
+   "options": "Blank/Unused\nNormal Hours\nOvertime 1.5\nOvertime 2\nLeave Hours - Annual\nLeave Hours - Sick\nLeave Hours - Family",
+   "default": "Blank/Unused"
+  },
+  {
+   "fieldname": "amt_5_source",
+   "fieldtype": "Select",
+   "label": "Amt 5",
+   "options": "Blank/Unused\nNormal Hours\nOvertime 1.5\nOvertime 2\nLeave Hours - Annual\nLeave Hours - Sick\nLeave Hours - Family",
+   "default": "Blank/Unused"
+  },
+  {
+   "fieldname": "amt_6_source",
+   "fieldtype": "Select",
+   "label": "Amt 6",
+   "options": "Blank/Unused\nNormal Hours\nOvertime 1.5\nOvertime 2\nLeave Hours - Annual\nLeave Hours - Sick\nLeave Hours - Family",
+   "default": "Blank/Unused"
+  },
+  {
+   "default": "0",
+   "description": "Append a trailing \"T\" totals line (summed Amt1-6 across every detail line) to the generated .txt, matching the original VBA tool's own optional prompt.",
+   "fieldname": "include_totals_line",
+   "fieldtype": "Check",
+   "label": "Include Totals Line"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-04 18:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Sage Payroll Company",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Payroll Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "Payroll User",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -27,6 +27,11 @@ CSV_DIR = BASE_DIR / "records"
 LOG_FILE = BASE_DIR / "gateway.log"
 STATE_FILE = BASE_DIR / "state.json"
 
+# device ip -> ISO timestamp of the end of that device's last successful
+# history poll. Separate file from STATE_FILE (employee IN/OUT state) -
+# different shape, different lifecycle, no reason to entangle them.
+POLL_STATE_FILE = BASE_DIR / "poll_state.json"
+
 # Device IPs/labels/credentials live outside the script now, in
 # gateway.json next to it - see load_gateway_config() below for the exact
 # shape. Keeps terminal admin passwords out of source control and lets
@@ -39,9 +44,31 @@ SERVER_PORT = 8080
 # Query every five minutes for clockings missed by live HTTP upload.
 POLL_INTERVAL_SECONDS = 300
 
-# Each polling cycle checks the previous 30 days for missed clockings.
-# Existing CSV duplicate detection prevents records being written twice.
+# Fallback window used only when a device has no recorded successful poll
+# yet (first run, or poll_state.json was lost/reset). Existing CSV
+# duplicate detection prevents records being written twice. Once a device
+# has polled successfully at least once, POLL_OVERLAP_MINUTES below is
+# used instead - re-requesting this whole 30-day/thousands-of-events
+# window every 5 minutes forever is what was pushing terminals into the
+# mid-pagination 401s this file used to hit constantly.
 HISTORY_LOOKBACK_DAYS = 30
+
+# Once a device has a recorded last-successful-poll time, later polls only
+# ask for events since (that time minus this overlap) rather than the full
+# HISTORY_LOOKBACK_DAYS window - the overlap is just a safety margin for
+# clock skew/late-arriving events; duplicate detection makes re-covering
+# it harmless.
+POLL_OVERLAP_MINUTES = 15
+
+# A 401 that shows up after earlier pages on the same paginated history
+# search already succeeded is the terminal's own digest auth session
+# going stale under sustained pagination - not a bad password. Retried
+# with a fresh session, resuming at the same position (not restarting the
+# search), since a fixed per-session page limit would otherwise recur at
+# the exact same position every time and the fetch would never progress
+# past it.
+MAX_PAGE_AUTH_RETRIES = 5
+PAGE_AUTH_RETRY_DELAY_SECONDS = 5
 
 # An OUT may occur on the following calendar day for night-shift staff.
 # After this many hours, an unmatched IN is treated as a missed clock-out
@@ -309,6 +336,49 @@ def save_employee_state() -> None:
     except Exception:
         logging.exception(
             "Failed to save employee state."
+        )
+
+
+def load_poll_state() -> dict[str, str]:
+    if not POLL_STATE_FILE.exists():
+        return {}
+
+    try:
+        with POLL_STATE_FILE.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
+            loaded = json.load(file)
+
+        return loaded if isinstance(loaded, dict) else {}
+
+    except Exception:
+        logging.exception(
+            "Failed to load poll state file."
+        )
+        return {}
+
+
+def save_poll_state(poll_state: dict[str, str]) -> None:
+    temporary_file = POLL_STATE_FILE.with_suffix(".tmp")
+
+    try:
+        with temporary_file.open(
+            "w",
+            encoding="utf-8",
+        ) as file:
+            json.dump(
+                poll_state,
+                file,
+                indent=2,
+                sort_keys=True,
+            )
+
+        temporary_file.replace(POLL_STATE_FILE)
+
+    except Exception:
+        logging.exception(
+            "Failed to save poll state."
         )
 
 
@@ -918,6 +988,23 @@ def fetch_device_history(
     start_datetime: datetime,
     end_datetime: datetime,
 ) -> list[dict[str, Any]]:
+    """
+    Paginates the terminal's ISAPI AcsEvent search. Every page repeats the
+    full search criteria (searchID, startTime/endTime/major/minor) plus a
+    position offset, so this looks like a stateless criteria+offset query
+    rather than a live server-side cursor - meaning it should be safe to
+    keep the same searchID/position across an auth-session refresh below.
+
+    On large history pulls the terminal's own digest auth session can go
+    stale partway through - a 401 that shows up only after earlier pages
+    on the same session already succeeded, which is not a bad password.
+    When that happens, this re-authenticates with a fresh session and
+    resumes at the SAME position rather than restarting the search from 0
+    - important, because if the terminal enforces some fixed limit on how
+    long/how many requests one auth session may make, restarting from
+    scratch would just hit that same limit at the same position every
+    time and the fetch would never make it past page one.
+    """
     device_ip = clean_value(device["ip"])
 
     url = (
@@ -925,11 +1012,62 @@ def fetch_device_history(
         "/ISAPI/AccessControl/AcsEvent?format=json"
     )
 
-    session = requests.Session()
-    session.auth = HTTPDigestAuth(
-        clean_value(device["username"]),
-        clean_value(device["password"]),
-    )
+    def new_session() -> requests.Session:
+        fresh_session = requests.Session()
+        fresh_session.auth = HTTPDigestAuth(
+            clean_value(device["username"]),
+            clean_value(device["password"]),
+        )
+        return fresh_session
+
+    session = new_session()
+
+    def post_page(payload: dict[str, Any]) -> dict[str, Any]:
+        nonlocal session
+
+        position_requested = payload["AcsEventCond"]["searchResultPosition"]
+
+        for attempt in range(1, MAX_PAGE_AUTH_RETRIES + 1):
+            response = session.post(
+                url,
+                json=payload,
+                timeout=30,
+            )
+
+            if response.status_code == 200:
+                return response.json()
+
+            stale_session_mid_pagination = (
+                response.status_code == 401
+                and position_requested > 0
+                and attempt < MAX_PAGE_AUTH_RETRIES
+            )
+
+            if stale_session_mid_pagination:
+                logging.warning(
+                    "device=%s got HTTP 401 mid-pagination at "
+                    "position=%s (attempt %s/%s) - retrying with a "
+                    "fresh session in %ss.",
+                    device_ip,
+                    position_requested,
+                    attempt,
+                    MAX_PAGE_AUTH_RETRIES,
+                    PAGE_AUTH_RETRY_DELAY_SECONDS,
+                )
+                stop_event.wait(PAGE_AUTH_RETRY_DELAY_SECONDS)
+                session = new_session()
+                continue
+
+            raise RuntimeError(
+                f"HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+
+        raise RuntimeError(
+            f"device={device_ip}: giving up after "
+            f"{MAX_PAGE_AUTH_RETRIES} attempts at "
+            f"position={position_requested}."
+        )
 
     search_id = str(uuid.uuid4())
     position = 0
@@ -955,19 +1093,7 @@ def fetch_device_history(
             }
         }
 
-        response = session.post(
-            url,
-            json=payload,
-            timeout=30,
-        )
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"HTTP {response.status_code}: "
-                f"{response.text[:500]}"
-            )
-
-        result = response.json()
+        result = post_page(payload)
         event_result = result.get(
             "AcsEvent",
             {},
@@ -1123,9 +1249,11 @@ def normalize_history_event(
 def poll_all_devices() -> None:
     now = datetime.now(SAST)
 
-    # Query from midnight 30 days ago. Duplicate checking ensures
-    # that already-imported events are not written again.
-    start_datetime = (
+    # Fallback window for a device with no recorded successful poll yet -
+    # first run, a brand-new device, or poll_state.json was lost/reset.
+    # Duplicate checking ensures already-imported events are not written
+    # again even if this whole window gets re-covered.
+    default_start_datetime = (
         now - timedelta(days=HISTORY_LOOKBACK_DAYS)
     ).replace(
         hour=0,
@@ -1134,6 +1262,7 @@ def poll_all_devices() -> None:
         microsecond=0,
     )
 
+    poll_state = load_poll_state()
     collected_clockings: list[dict[str, Any]] = []
 
     for device in DEVICES:
@@ -1142,10 +1271,21 @@ def poll_all_devices() -> None:
 
         device_ip = clean_value(device["ip"])
 
+        last_success = parse_hik_datetime(
+            clean_value(poll_state.get(device_ip))
+        )
+
+        start_datetime = (
+            last_success - timedelta(minutes=POLL_OVERLAP_MINUTES)
+            if last_success is not None
+            else default_start_datetime
+        )
+
         try:
             logging.info(
-                "Polling stored events from %s...",
+                "Polling stored events from %s (since %s)...",
                 device_ip,
+                start_datetime.isoformat(),
             )
 
             events = fetch_device_history(
@@ -1170,6 +1310,13 @@ def poll_all_devices() -> None:
                     collected_clockings.append(
                         normalized
                     )
+
+            # Only advance this device's watermark once its fetch has
+            # actually succeeded end-to-end - a failed/partial fetch keeps
+            # retrying the same (wider) window next cycle instead of
+            # silently skipping whatever it didn't get to.
+            poll_state[device_ip] = now.isoformat()
+            save_poll_state(poll_state)
 
         except requests.RequestException:
             logging.exception(

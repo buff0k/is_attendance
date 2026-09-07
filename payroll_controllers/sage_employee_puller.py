@@ -1,0 +1,254 @@
+"""
+sage_employee_puller.py - a heartbeat that polls Frappe for pending Sage
+employee-pull requests and, for each one it can serve, queries Sage VIP
+Premier directly (its own Windows ODBC DSNs, e.g. "VIP_Company001") for
+that Company Number's active employee list and posts the result back into
+the requesting Sage Payroll Run.
+
+Runs continuously on the Windows PC that already has the VIP_Company00N
+ODBC DSNs configured for the existing Excel/VBA payroll tooling - Sage's
+DSNs aren't reachable from the Linux Frappe bench, same reason gateway.py/
+erp_uploader.py already live here as separate Windows-side scripts (see
+../clocking_controllers/README_CON.md for that same pattern, and this
+folder's own README_CON.md for this script's).
+
+Frappe never talks to Sage directly and this script never runs unprompted
+against Sage - the trigger always starts on the Frappe side: a person
+clicks "Request Employee Pull" on a Sage Payroll Run (sets its Status to
+"Pull Requested"), and this heartbeat's next poll of
+list_pending_pull_requests() is what notices and actually does the ODBC
+work. Nothing here decides on its own which Runs need pulling.
+
+The query and connection shape below were extracted directly from the real
+Salary Sheet .xls files this integration was reverse-engineered from - a
+byte search of the OLE binary turned up the exact embedded MS Query
+definition Excel itself was running:
+
+    SELECT EMP_INFO_FIXED.Surname AS 'SURNAME', EMP_INFO_FIXED.EmployeeCode AS 'COY',
+           EMP_INFO_FIXED.FullNames AS 'NAME', EMP_INFO_FIXED.IDNumber AS 'ID',
+           DESC_JOBTITLE.JobTitleLongDesc AS 'OCCUPATION'
+    FROM dba.DESC_JOBTITLE DESC_JOBTITLE, dba.EMP_INFO_FIXED EMP_INFO_FIXED
+    WHERE EMP_INFO_FIXED.JobTitleCode = DESC_JOBTITLE.JobTitleCode
+      AND ((EMP_INFO_FIXED.PaypointCode = ?) AND (EMP_INFO_FIXED.EmployeeStatus = 'N'))
+    ORDER BY EMP_INFO_FIXED.Surname, DESC_JOBTITLE.JobTitleLongDesc
+
+    DSN=VIP_Company001;UID=;PWD=;
+
+Only identity columns are proven to be sourced this way - no embedded
+query for hours baselines, allowances, or leave balances was found
+anywhere in the real files, so this script (and the Frappe-side DocType it
+feeds) deliberately doesn't attempt to pull those; Normal/Overtime/Leave
+hours are computed on the Frappe side from our own Employee Checkin and
+Leave Application data instead (see is_attendance.controllers.sage_payroll).
+
+Needs `pyodbc` and `requests` installed, and the same Sybase SQL Anywhere
+/ iAnywhere ODBC driver the existing VBA tooling already depends on (no
+new driver install implied - if the Excel query tool works on this PC,
+the DSN already works).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from pathlib import Path
+from typing import Any
+
+import pyodbc
+import requests
+
+BASE_DIR = Path(r"C:\HikGateway\PayrollController")
+CONFIG_FILE = BASE_DIR / "sage_employee_puller.json"
+LOG_FILE = BASE_DIR / "sage_employee_puller.log"
+
+HEARTBEAT_INTERVAL_SECONDS = 60  # overridable per-instance via config's own "heartbeat_interval_seconds"
+
+SQL_QUERY = """
+SELECT EMP_INFO_FIXED.Surname AS SURNAME, EMP_INFO_FIXED.EmployeeCode AS COY,
+       EMP_INFO_FIXED.FullNames AS NAME, EMP_INFO_FIXED.IDNumber AS ID,
+       DESC_JOBTITLE.JobTitleLongDesc AS OCCUPATION
+FROM dba.DESC_JOBTITLE DESC_JOBTITLE, dba.EMP_INFO_FIXED EMP_INFO_FIXED
+WHERE EMP_INFO_FIXED.JobTitleCode = DESC_JOBTITLE.JobTitleCode
+  AND ((EMP_INFO_FIXED.PaypointCode = ?) AND (EMP_INFO_FIXED.EmployeeStatus = 'N'))
+ORDER BY EMP_INFO_FIXED.Surname, DESC_JOBTITLE.JobTitleLongDesc
+"""
+
+BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+	level=logging.INFO,
+	format="%(asctime)s %(levelname)s %(message)s",
+	handlers=[
+		logging.FileHandler(LOG_FILE, encoding="utf-8"),
+		logging.StreamHandler(),
+	],
+)
+
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+def load_config() -> dict[str, Any]:
+	if not CONFIG_FILE.exists():
+		raise RuntimeError(
+			f"Missing config file: {CONFIG_FILE}. Copy sage_employee_puller.example.json there and fill in real values."
+		)
+	with CONFIG_FILE.open("r", encoding="utf-8") as file:
+		return json.load(file)
+
+
+def find_company_config(config: dict[str, Any], sage_company_no: str) -> dict[str, Any] | None:
+	for company in config.get("companies", []):
+		if company.get("sage_company_no") == sage_company_no and company.get("enabled"):
+			return company
+	return None
+
+
+# ============================================================
+# SAGE (ODBC)
+# ============================================================
+
+def pull_company_employees(dsn: str, sage_company_no: str, paypoints: list[str]) -> list[dict[str, Any]]:
+	"""Connects to this Company Number's own Sage ODBC DSN and runs the
+	confirmed identity query once per Paypoint - matches how the real Excel
+	query tooling issues one query per site, just automated and combined
+	here instead of split across separate sheets/files."""
+	if not paypoints:
+		raise RuntimeError(f"Company '{sage_company_no}' has no paypoints to query.")
+
+	connection_string = f"DSN={dsn};UID=;PWD=;"
+	records: list[dict[str, Any]] = []
+
+	with pyodbc.connect(connection_string) as connection:
+		cursor = connection.cursor()
+		for paypoint_code in paypoints:
+			cursor.execute(SQL_QUERY, paypoint_code)
+			for row in cursor.fetchall():
+				records.append(
+					{
+						"surname": row.SURNAME,
+						"employee_code": row.COY,
+						"full_names": row.NAME,
+						"id_number": row.ID,
+						"occupation": row.OCCUPATION,
+						"paypoint_code": paypoint_code,
+					}
+				)
+			logging.info("Paypoint %s: %d employee(s) pulled from %s.", paypoint_code, cursor.rowcount, dsn)
+
+	return records
+
+
+# ============================================================
+# FRAPPE
+# ============================================================
+
+def auth_headers(config: dict[str, Any]) -> dict[str, str]:
+	return {"Authorization": f"token {config['api_key']}:{config['api_secret']}"}
+
+
+def fetch_pending_requests(config: dict[str, Any]) -> list[dict[str, Any]]:
+	"""Polls is_attendance.controllers.sage_payroll.list_pending_pull_requests
+	- every Sage Payroll Run currently waiting on a pull, with the Sage
+	Company Number and Paypoints each one needs (from its own Sage Payroll
+	Company record). Not every entry necessarily belongs to this heartbeat
+	instance - filtered against this script's own configured+enabled
+	companies in run_heartbeat_cycle() below, so several bench instances
+	(or a future second Windows host) can share the same polling endpoint
+	without stepping on each other."""
+	response = requests.get(
+		f"{config['base_url']}/api/method/is_attendance.controllers.sage_payroll.list_pending_pull_requests",
+		headers=auth_headers(config),
+		timeout=30,
+	)
+	response.raise_for_status()
+	return response.json().get("message") or []
+
+
+def post_to_frappe(config: dict[str, Any], sage_payroll_run: str, records: list[dict[str, Any]]) -> dict[str, Any]:
+	response = requests.post(
+		f"{config['base_url']}/api/method/run_doc_method",
+		headers={**auth_headers(config), "Content-Type": "application/json"},
+		json={
+			"dt": "Sage Payroll Run",
+			"dn": sage_payroll_run,
+			"method": "ingest_employees",
+			"records": records,
+		},
+		timeout=120,
+	)
+	response.raise_for_status()
+	return response.json().get("message", {})
+
+
+# ============================================================
+# HEARTBEAT CYCLE
+# ============================================================
+
+def run_heartbeat_cycle(config: dict[str, Any]) -> None:
+	try:
+		pending = fetch_pending_requests(config)
+	except requests.RequestException:
+		logging.exception("Failed to poll for pending pull requests.")
+		return
+
+	if not pending:
+		logging.info("Heartbeat: no pending pull requests.")
+		return
+
+	logging.info("Heartbeat: %d pending pull request(s).", len(pending))
+
+	for request in pending:
+		run_name = request.get("run")
+		sage_company_no = request.get("sage_company_no")
+
+		company = find_company_config(config, sage_company_no)
+		if not company:
+			logging.warning(
+				"Run %s wants Company %s, which isn't configured/enabled in %s - skipping "
+				"(fine if a different heartbeat instance owns that company).",
+				run_name,
+				sage_company_no,
+				CONFIG_FILE,
+			)
+			continue
+
+		# Paypoints come from the request itself (Frappe's own Sage Payroll
+		# Company record, the canonical source) rather than this script's
+		# local config, so a Paypoint added in Frappe takes effect without
+		# needing this file edited and the heartbeat restarted too.
+		paypoints = request.get("paypoints") or company.get("paypoints") or []
+
+		try:
+			records = pull_company_employees(company["dsn"], sage_company_no, paypoints)
+			logging.info(
+				"Run %s: pulled %d employee record(s) for Company %s.", run_name, len(records), sage_company_no
+			)
+			result = post_to_frappe(config, run_name, records)
+			logging.info("Run %s: ingest result %s", run_name, result)
+		except Exception:
+			logging.exception("Run %s: heartbeat cycle failed.", run_name)
+
+
+def main() -> None:
+	logging.info("sage_employee_puller heartbeat started.")
+
+	while True:
+		try:
+			config = load_config()  # re-read every cycle - a newly-enabled company/edited paypoint list needs no restart
+			interval = config.get("heartbeat_interval_seconds") or HEARTBEAT_INTERVAL_SECONDS
+			run_heartbeat_cycle(config)
+		except Exception:
+			logging.exception("Unhandled heartbeat-cycle exception.")
+			interval = HEARTBEAT_INTERVAL_SECONDS
+
+		time.sleep(interval)
+
+
+if __name__ == "__main__":
+	try:
+		main()
+	except KeyboardInterrupt:
+		logging.info("sage_employee_puller stopped.")

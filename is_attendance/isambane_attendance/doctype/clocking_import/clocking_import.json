@@ -1,0 +1,200 @@
+{
+ "actions": [],
+ "autoname": "CHI-.######",
+ "creation": "2026-09-04 08:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "file",
+  "branch",
+  "column_break_status",
+  "status",
+  "detected_format",
+  "counts_section",
+  "total_rows",
+  "column_break_counts",
+  "unresolved_count",
+  "employees_without_branch",
+  "issues_section",
+  "issues",
+  "log_section",
+  "import_log",
+  "created_checkins",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "description": "Either the HIKVision gateway's recordList CSV export (sName, sJobNo, sCard, Date, Time, IN/OUT, ReadID, EventMainCode, EventSubCode, AttendanceStatus, WearMask, SerialNo, ClockStation) or a legacy tab-separated .DAT export - the format is detected automatically from the file's own content (see Detected Format below). Locked once this import is submitted.",
+   "fieldname": "file",
+   "fieldtype": "Attach",
+   "in_list_view": 1,
+   "label": "Clocking Export File",
+   "reqd": 1
+  },
+  {
+   "description": "Checkins always use the employee's own Branch (from their Employee record). This is only a fallback for employees who have no Branch set at all - after this, IS Attendance Settings' Clocking Machines mapping is tried as a last resort per checkin's own device. Leave blank to skip straight to that device mapping (or require every employee to have their own Branch, if no device mapping covers them either).",
+   "fieldname": "branch",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Fallback Branch",
+   "options": "Branch"
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Not Parsed",
+   "description": "Not Parsed: no file attached yet. Missing Information: file parsed but some employee codes/branches don't resolve. Pending Import: everything resolves, ready for Start Import. Importing: the background job is running. Completed: submitted. Error: the background job failed after being queued - see Import Log.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Not Parsed\nMissing Information\nPending Import\nImporting\nCompleted\nError",
+   "read_only": 1
+  },
+  {
+   "description": "Which known shape the attached file was recognised as - see is_attendance.controllers.clocking_parsers.sniff_format(). Blank until the file is parsed.",
+   "fieldname": "detected_format",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Detected Format",
+   "options": "\nCSV\nDAT",
+   "read_only": 1
+  },
+  {
+   "fieldname": "counts_section",
+   "fieldtype": "Section Break",
+   "label": "Summary"
+  },
+  {
+   "fieldname": "total_rows",
+   "fieldtype": "Int",
+   "label": "Total Rows in File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_counts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "unresolved_count",
+   "fieldtype": "Int",
+   "label": "Unresolved Employee Codes",
+   "read_only": 1
+  },
+  {
+   "description": "Employees with at least one checkin in this file that can't get a Branch at all - no Branch on their own Employee record, no Fallback Branch set above, and no Branch mapped for that checkin's own device in IS Attendance Settings' Clocking Machines table either. Set a Branch on these Employees, set a Fallback Branch, or map their device(s) in Settings, to clear this.",
+   "fieldname": "employees_without_branch",
+   "fieldtype": "Small Text",
+   "label": "Employees Without a Branch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "issues_section",
+   "fieldtype": "Section Break",
+   "label": "Issues"
+  },
+  {
+   "description": "Every employee code in the file that couldn't be matched to an Employee. Assign an Employee to each row and save - this both clears the issue and permanently records the mapping on that Employee, so future imports resolve it automatically. Submitting is blocked while any issue remains unresolved.",
+   "fieldname": "issues",
+   "fieldtype": "Table",
+   "label": "Issues",
+   "options": "Clocking Import Issue"
+  },
+  {
+   "fieldname": "log_section",
+   "fieldtype": "Section Break",
+   "label": "Import Log"
+  },
+  {
+   "fieldname": "import_log",
+   "fieldtype": "Code",
+   "label": "Import Log",
+   "read_only": 1
+  },
+  {
+   "fieldname": "created_checkins",
+   "fieldtype": "Table",
+   "hidden": 1,
+   "label": "Created Checkins",
+   "no_copy": 1,
+   "options": "Clocking Import Checkin",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Clocking Import",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-09-07 08:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Clocking Import",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "if_owner": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR User",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR User",
+   "share": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

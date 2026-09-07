@@ -13,9 +13,9 @@ range the way raw Checkins can. Employee Checkin is the one central truth
 every import path (DAT files, HIKVision, manual, Clocking Adjustment) all
 feed into, so this report reads from it directly and reuses the exact same
 clustering/pairing logic attendance_sync.py uses for official Attendance
-(``_cluster_checkins``/``_normalize_log_types``/``_sum_intervals``, plus
-``_get_employee_leave_days`` for leave), so the numbers here never quietly
-disagree with the numbers HR-Attendance actually shows.
+(``_cluster_checkins``/``_normalize_log_types``/``_sum_intervals``), so the
+numbers here never quietly disagree with the numbers HR-Attendance actually
+shows.
 
 Day classification, per employee/date:
 
@@ -25,11 +25,15 @@ Day classification, per employee/date:
   used by `ir`'s Shift Designer (``ir_shift_design.get_sa_public_holidays``),
   reused here directly rather than the Frappe "Holiday List" doctype, which
   has to be manually maintained and can silently miss a year), or covered
-  by an Approved Leave Application. Applies uniformly to
+  by a *full* Approved Leave Application. Applies uniformly to
   Weekdays, Saturdays and Sundays alike - a weekend day with zero
   clocking counts as Missed for every employee, not only those who had a
   Shift Assignment scheduling them to work it (confirmed with the user -
-  this is deliberately the noisier, more literal interpretation).
+  this is deliberately the noisier, more literal interpretation). A half
+  day (``Leave Application.half_day`` + ``half_day_date`` pinpointing this
+  specific date - see ``_get_leave_detail_by_day``) still expects a genuine
+  partial clocking, so Missed still fires on zero punches even on a
+  half-day-leave date; the leave only excuses half the day, not all of it.
 - **No Out / No In**: only meaningful on a day with exactly one clustered
   punch (2+ punches always normalize to having both an IN and an OUT - see
   attendance_sync.py). Which side is missing is read from that single
@@ -37,11 +41,22 @@ Day classification, per employee/date:
   calculations elsewhere in this app because it doesn't reliably alternate
   across many days for the same employee, but for this one-punch-that-day
   case it's the only signal available at all, so it's used here as a
-  best-effort classification.
+  best-effort classification. Suppressed on a half-day-leave date - a
+  single punch is exactly what a real half day looks like (an employee
+  called away to a personal emergency partway through, or a pre-approved
+  half day either way round), not a missing pair.
 - **Late In**: the day's first-in time (after clustering/normalizing) is
-  later than Start Time + Threshold.
+  later than Start Time + Threshold. Suppressed on a half-day-leave date -
+  reduced hours make the full-day threshold not meaningfully applicable.
 - **Early Out**: the day's last-out time is earlier than End Time -
-  Threshold.
+  Threshold. Suppressed on a half-day-leave date, same reasoning as Late In
+  - this is exactly the case of an employee retroactively getting a half
+  day approved after being called away partway through.
+
+Mirrors attendance_sync.py's own distinction between Attendance status
+"Half Day" and "On Leave" (see ``_derive_status_from_leave_and_hours``) -
+a half day is never treated the same as a full leave day there either, so
+this report doesn't invent a separate interpretation.
 """
 
 from __future__ import annotations
@@ -55,7 +70,6 @@ from frappe.utils import add_days, cint, get_datetime, get_time, getdate
 from is_attendance.controllers.attendance_sync import (
 	CLUSTER_SECONDS,
 	_cluster_checkins,
-	_get_employee_leave_days,
 	_normalize_log_types,
 	_sum_intervals,
 )
@@ -107,6 +121,20 @@ def get_columns() -> list[dict]:
 				}
 			)
 
+	# Grand totals - Weekday+Saturday+Sunday combined per metric. Appended
+	# after the full day-type breakdown (not reordered to the front) so
+	# nothing relying on this list's existing order/length - none currently
+	# does, but no reason to risk it - is affected.
+	for metric, label in METRICS:
+		columns.append(
+			{
+				"label": _(f"Total {label}"),
+				"fieldname": f"total_{metric}",
+				"fieldtype": "Int",
+				"width": 95,
+			}
+		)
+
 	return columns
 
 
@@ -138,7 +166,7 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 
 	employee_meta = _get_employee_meta(employees)
 	holidays = get_sa_public_holidays(from_date, to_date)
-	leave_days = _get_leave_day_set(employees, from_date, to_date)
+	leave_detail = _get_leave_detail_by_day(employees, from_date, to_date)
 	checkins_by_day = _get_checkins_grouped(employees, from_date, to_date)
 
 	summary_rows = []
@@ -149,6 +177,7 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 
 		totals = {f"total_{day_type.lower()}s": 0 for day_type in DAY_TYPES}
 		counts = {f"{day_type.lower()}_{metric}": 0 for day_type in DAY_TYPES for metric, _label in METRICS}
+		grand_totals = {f"total_{metric}": 0 for metric, _label in METRICS}
 		detail_rows = []
 
 		current = from_date
@@ -157,19 +186,35 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 			totals[f"total_{day_type.lower()}s"] += 1
 
 			holiday_name = holidays.get(current)
-			on_leave = (employee, current) in leave_days
+			leave_here = leave_detail.get((employee, current))
+			is_half_day_leave = bool(leave_here and leave_here["half_day"])
+			is_full_day_leave = bool(leave_here) and not is_half_day_leave
 			day_checkins = checkins_by_day.get((employee, current), [])
 
 			classification = _classify_day(day_checkins, start_time, end_time, threshold_minutes)
 
-			if holiday_name or on_leave:
+			if holiday_name or is_full_day_leave:
+				# Public holiday or a full leave day - fully exempt.
 				flags = {"missed": False, "no_out": False, "no_in": False, "late_in": False, "early_out": False}
 			else:
 				flags = {key: classification[key] for key in ("missed", "no_out", "no_in", "late_in", "early_out")}
+				if is_half_day_leave:
+					# A half day still expects a genuine partial clocking -
+					# Missed stays as computed (zero punches is still worth
+					# flagging; the leave only excuses half the day), but a
+					# single punch, or arriving late/leaving early, is
+					# exactly what a real half day looks like, not a
+					# violation of it. Mirrors attendance_sync.py's own
+					# distinction between "Half Day" and "On Leave" status -
+					# this report never disagrees with what the official
+					# Attendance record already shows for the date.
+					flags["no_out"] = flags["no_in"] = flags["late_in"] = flags["early_out"] = False
+
 				prefix = day_type.lower()
 				for metric, _label in METRICS:
 					if flags[metric]:
 						counts[f"{prefix}_{metric}"] += 1
+						grand_totals[f"total_{metric}"] += 1
 
 			detail_rows.append(
 				{
@@ -180,7 +225,8 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 					"out_time": classification["last_out"],
 					"hours_worked": classification["hours_worked"],
 					"public_holiday": holiday_name or "",
-					"on_leave": bool(on_leave),
+					"on_leave": is_full_day_leave,
+					"half_day_leave": is_half_day_leave,
 					**flags,
 				}
 			)
@@ -195,6 +241,7 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 				"company": meta.get("company"),
 				**totals,
 				**counts,
+				**grand_totals,
 			}
 		)
 		daily_detail[employee] = detail_rows
@@ -307,13 +354,23 @@ def _resolve_employees(filters: dict) -> list[str]:
 	query_filters: dict = {}
 	if employees:
 		query_filters["name"] = ["in", employees]
-	else:
-		# Browsing without picking specific people - default to active
-		# employees only, otherwise long-terminated staff clutter the grid.
+
+	# Active-only unless explicitly overridden - a real, always-respected
+	# toggle now, not just an implicit default for the no-selection case
+	# (previously an inactive employee hand-picked via the multi-select
+	# would show regardless; now it only does with the box ticked, which
+	# is more predictable).
+	if not filters.get("include_inactive"):
 		query_filters["status"] = "Active"
 
 	if filters.get("company"):
 		query_filters["company"] = filters["company"]
+
+	if filters.get("department"):
+		query_filters["department"] = filters["department"]
+
+	if filters.get("payroll_cost_center"):
+		query_filters["payroll_cost_center"] = filters["payroll_cost_center"]
 
 	branches = responsible_branches_for_user()
 	if filters.get("branch"):
@@ -370,13 +427,52 @@ def get_sa_public_holidays(start_date, end_date) -> dict:
 	}
 
 
-def _get_leave_day_set(employees: list[str], from_date, to_date) -> set[tuple[str, object]]:
-	employee_set = set(employees)
-	return {
-		(employee, date)
-		for employee, date in _get_employee_leave_days(from_date, to_date)
-		if employee in employee_set
-	}
+def _get_leave_detail_by_day(employees: list[str], from_date, to_date) -> dict[tuple[str, object], dict]:
+	"""Per (employee, date) leave detail for every date covered by an
+	approved Leave Application in range - not just a plain membership set,
+	since a half-day date needs different missed-clocking handling than a
+	full leave day (see compute()'s use of this). Mirrors
+	attendance_sync._get_leave_info's own half_day_date condition exactly:
+	a leave application's half_day/half_day_date fields pinpoint at most
+	ONE date within its own from_date-to_date range as being the half day;
+	every other date in that same application's range is a full leave day.
+
+	Fetches directly rather than reusing attendance_sync._get_employee_leave_days
+	because that function only returns a flat (employee, date) membership
+	set (enough for attendance_sync's own daily_sync_attendance worklist,
+	which doesn't need to distinguish half from full) - this report needs
+	the half_day/half_day_date fields themselves, and needs them batched
+	for a specific employee list rather than one query per employee/day."""
+	if not employees:
+		return {}
+
+	applications = frappe.get_all(
+		"Leave Application",
+		filters={
+			"employee": ["in", employees],
+			"docstatus": 1,
+			"status": "Approved",
+			"from_date": ("<=", to_date),
+			"to_date": (">=", from_date),
+		},
+		fields=["employee", "leave_type", "half_day", "half_day_date", "from_date", "to_date"],
+	)
+
+	detail: dict[tuple[str, object], dict] = {}
+	for application in applications:
+		app_start = max(getdate(application.from_date), getdate(from_date))
+		app_end = min(getdate(application.to_date), getdate(to_date))
+		half_day_date = getdate(application.half_day_date) if cint(application.half_day) and application.half_day_date else None
+
+		current = app_start
+		while current <= app_end:
+			detail[(application.employee, current)] = {
+				"leave_type": application.leave_type,
+				"half_day": bool(half_day_date and half_day_date == current),
+			}
+			current = add_days(current, 1)
+
+	return detail
 
 
 def _get_checkins_grouped(employees: list[str], from_date, to_date) -> dict[tuple[str, object], list[dict]]:
