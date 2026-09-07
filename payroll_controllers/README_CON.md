@@ -19,11 +19,26 @@ import Frappe or run on the bench.
 log (`sage_employee_puller.log`) is also gitignored - host-local, never
 meaningful to commit.
 
-**Setup on the Windows host**: copy `sage_employee_puller.example.json` to
-`C:\HikGateway\PayrollController\sage_employee_puller.json`, then fill in
-real values. Never rename the `.example.json` in place and edit it
-directly inside a git checkout - copy it out, or the real one will
-eventually get committed the first time someone runs a blanket `git add`.
+## Deployment
+
+Unlike `gateway.py`/`erp_uploader.py`, this script doesn't prescribe a
+folder tree - it isn't related to HikGateway and may well run on a
+different machine entirely (the Payroll Office's own PC, wherever Sage's
+ODBC DSNs are already configured for the existing Excel/VBA tooling, not
+necessarily the clocking-terminal gateway PC). Config and log always live
+next to the script itself (`sage_employee_puller.json`/`.log` beside
+`sage_employee_puller.py`), so copy this folder's contents wherever makes
+sense on that host - `C:\SagePayrollPuller\`, a subfolder next to the
+existing Excel tooling, wherever - and it works from there. That copy is
+still a stable path for a Scheduled Task to point at, since it stays put
+once deployed; it just isn't a path this repo dictates.
+
+**Setup on the Windows host**: copy this folder's contents to wherever
+you're deploying it, copy `sage_employee_puller.example.json` to
+`sage_employee_puller.json` next to the script, then fill in real values.
+Never rename the `.example.json` in place and edit it directly inside a
+git checkout - copy it out, or the real one will eventually get committed
+the first time someone runs a blanket `git add`.
 
 ## `sage_employee_puller.py`
 
@@ -112,18 +127,45 @@ just: add its Paypoint on the `Sage Payroll Company` doctype in Frappe.
 
 **Run it**: `python sage_employee_puller.py` (needs `pyodbc` and
 `requests` installed, plus the same Sybase SQL Anywhere / iAnywhere ODBC
-driver the existing VBA tooling already depends on - if the Excel query
-tool works on this PC, the DSN already works). Intended to run
-continuously, independently of `gateway.py`/`erp_uploader.py` - a
-Scheduled Task, or under the same process supervisor as those two.
+driver the existing VBA tooling already depends on). Intended to run
+continuously - a Scheduled Task (see the Permissions note above before
+making it unattended) or a Windows service wrapper, entirely independent
+of `gateway.py`/`erp_uploader.py` since it isn't necessarily even on the
+same machine as those two.
 
-## Frappe-side prerequisite
+## Permissions
 
-The API user needs a role that can create/write `Sage Payroll Employee`
-and write `Sage Payroll Run` documents (System Manager, Payroll Manager,
-or Payroll User - see those doctypes' permissions) with an API key/secret
-generated for it. That key/secret is what goes into
+**Frappe-side**: the API user needs the **System Manager**, **Payroll
+Manager**, or **Payroll User** role - `list_pending_pull_requests` and
+`ingest_employees` both explicitly check for one of those three
+(`is_attendance.controllers.sage_payroll._require_payroll_role`), on top
+of the normal doctype-level create/write rights that role set already
+carries for `Sage Payroll Employee`/`Sage Payroll Run`. Generate an API
+key/secret for that user - that pair is what goes into
 `sage_employee_puller.json`.
+
+**Windows-side**: whatever account runs this script (interactively, as a
+Scheduled Task, or as a service) needs:
+
+- Read/write access to wherever it's deployed (to read its own config,
+  write its own log).
+- Outbound HTTPS to reach `base_url` (allowlist it if there's an egress
+  firewall/proxy in the way).
+- Whatever lets the existing Excel/VBA query tooling connect through each
+  configured ODBC DSN today - **not independently verified this session**.
+  The real connection string has blank credentials
+  (`DSN=VIP_Company001;UID=;PWD=;`), which usually means the DSN itself
+  holds (or otherwise resolves) the actual credential rather than the
+  caller supplying one - but *how* it resolves that isn't confirmed. Some
+  legacy Sybase/iAnywhere ODBC setups cache that per Windows user (under
+  `HKEY_CURRENT_USER`), in which case only an interactive session logged
+  in as that specific user can actually connect, and a headless Scheduled
+  Task/service running as a different account would fail even though the
+  DSN "exists" system-wide. **Before scheduling this unattended, confirm
+  it actually connects under the account that will really run it** - e.g.
+  a one-off interactive `python sage_employee_puller.py` test logged in as
+  that account, or a manual Scheduled Task run - rather than assuming it
+  behaves like the Excel tool just because the DSN is configured.
 
 ## Deliberately out of scope for this pass
 

@@ -58,7 +58,17 @@ from typing import Any
 import pyodbc
 import requests
 
-BASE_DIR = Path(r"C:\HikGateway\PayrollController")
+# Wherever this script itself is deployed - no folder convention prescribed
+# (unlike gateway.py/erp_uploader.py's own C:\HikGateway\... tree, which
+# makes sense for those two since they're tightly coupled to each other and
+# to the specific clocking-terminal gateway PC; this script is unrelated to
+# HikGateway and may well run on a different machine entirely - the Payroll
+# Office's own PC, wherever Sage's ODBC DSNs are already configured for the
+# existing Excel/VBA tooling). Config and log live next to the script
+# itself, so copy this folder wherever makes sense on that host and it just
+# works - still a stable path for a Scheduled Task to point at, since that
+# copy stays put once deployed.
+BASE_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = BASE_DIR / "sage_employee_puller.json"
 LOG_FILE = BASE_DIR / "sage_employee_puller.log"
 
@@ -73,8 +83,6 @@ WHERE EMP_INFO_FIXED.JobTitleCode = DESC_JOBTITLE.JobTitleCode
   AND ((EMP_INFO_FIXED.PaypointCode = ?) AND (EMP_INFO_FIXED.EmployeeStatus = 'N'))
 ORDER BY EMP_INFO_FIXED.Surname, DESC_JOBTITLE.JobTitleLongDesc
 """
-
-BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
 	level=logging.INFO,
