@@ -646,9 +646,26 @@ def _get_shift_window(
 
 def _combine_date_time(
 	date_value,
-	time_value: time,
+	time_value,
 ) -> datetime:
-	"""Combine a date value and time value into a datetime."""
+	"""Combine a date value and time value into a datetime.
+
+	Frappe's own DB driver can hand back a Time field's value as either a
+	datetime.time or a datetime.timedelta (duration since midnight) -
+	confirmed live on this site: a real Shift Type.start_time came back as
+	a timedelta, which datetime.combine() rejects outright with a
+	TypeError. This had never been exercised before (no Employee on this
+	site had a real Shift Assignment until now), so it's been a dormant
+	crash waiting for the first one - normalizing here rather than
+	trusting the caller's own type."""
+	if isinstance(time_value, timedelta):
+		total_seconds = int(time_value.total_seconds())
+		time_value = time(
+			hour=(total_seconds // 3600) % 24,
+			minute=(total_seconds // 60) % 60,
+			second=total_seconds % 60,
+		)
+
 	return datetime.combine(
 		getdate(date_value),
 		time_value,

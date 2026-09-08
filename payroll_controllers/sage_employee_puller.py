@@ -19,6 +19,16 @@ clicks "Request Employee Pull" on a Sage Payroll Run (sets its Status to
 list_pending_pull_requests() is what notices and actually does the ODBC
 work. Nothing here decides on its own which Runs need pulling.
 
+Frappe's own Sage Payroll Company record is the sole source of truth for
+which Paypoints belong to a Company Number - the local config below
+deliberately doesn't duplicate that. It holds exactly two things Frappe
+has no business knowing: which local ODBC DSN serves each Company Number
+(host-local infrastructure), and whether *this* heartbeat instance is
+allowed to serve it (in case a second Windows host ever handles a
+different subset of companies). Everything else - Paypoints, Branch
+mapping, the Amt column layout - lives in Frappe and is read fresh on
+every poll.
+
 The query and connection shape below were extracted directly from the real
 Salary Sheet .xls files this integration was reverse-engineered from - a
 byte search of the OLE binary turned up the exact embedded MS Query
@@ -108,6 +118,10 @@ def load_config() -> dict[str, Any]:
 
 
 def find_company_config(config: dict[str, Any], sage_company_no: str) -> dict[str, Any] | None:
+	"""Looks up the local DSN mapping for a Sage Company Number - just
+	`{sage_company_no, dsn, enabled}`. Everything else about that Company
+	(Paypoints, Branch mapping, Amt layout) is read fresh from Frappe on
+	every poll, never duplicated here."""
 	for company in config.get("companies", []):
 		if company.get("sage_company_no") == sage_company_no and company.get("enabled"):
 			return company
@@ -224,10 +238,19 @@ def run_heartbeat_cycle(config: dict[str, Any]) -> None:
 			continue
 
 		# Paypoints come from the request itself (Frappe's own Sage Payroll
-		# Company record, the canonical source) rather than this script's
-		# local config, so a Paypoint added in Frappe takes effect without
-		# needing this file edited and the heartbeat restarted too.
-		paypoints = request.get("paypoints") or company.get("paypoints") or []
+		# Company record) - not from this script's local config, which
+		# doesn't hold Paypoints at all. Frappe is the sole source of truth
+		# for that mapping; a local fallback would risk silently re-querying
+		# a Paypoint someone deliberately removed in Frappe.
+		paypoints = request.get("paypoints") or []
+		if not paypoints:
+			logging.warning(
+				"Run %s: Company %s has no Paypoints configured on its Sage Payroll Company record - "
+				"nothing to pull. Add at least one Paypoint there.",
+				run_name,
+				sage_company_no,
+			)
+			continue
 
 		try:
 			records = pull_company_employees(company["dsn"], sage_company_no, paypoints)

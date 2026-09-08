@@ -18,12 +18,27 @@ frappe.ui.form.on("Clocking Import", {
 		// out on a large one. before_submit() also refuses to run it inline
 		// as a second line of defense, but we don't want the user to ever
 		// hit that - so replace the primary action entirely.
-		if (frm.doc.status === "Pending Import") {
+		//
+		// Shows whenever there's at least one row ready to import, not just
+		// once everything resolves - "Missing Information" and "Partially
+		// Imported" both allow it now (see the .py module docstring): a file
+		// only ever refuses to run when resolvable_count is 0.
+		const can_start_import =
+			["Pending Import", "Missing Information", "Partially Imported"].includes(frm.doc.status) &&
+			frm.doc.resolvable_count;
+
+		if (can_start_import) {
+			const is_full_run = frm.doc.status === "Pending Import";
 			frm.page.set_primary_action(__("Start Import"), () => {
 				frappe.confirm(
-					__(
-						"This runs in the background and will create Employee Checkin records once done. Continue?"
-					),
+					is_full_run
+						? __(
+								"This runs in the background and will create Employee Checkin records once done. Continue?"
+						  )
+						: __(
+								"{0} of {1} rows are ready to import now - the rest will stay unresolved for a later run. This runs in the background. Continue?",
+								[frm.doc.resolvable_count, frm.doc.total_rows]
+						  ),
 					() => {
 						frm.call("queue_import").then(() => {
 							frm.reload_doc();
@@ -31,7 +46,9 @@ frappe.ui.form.on("Clocking Import", {
 					}
 				);
 			});
-		} else if (frm.doc.file) {
+		}
+
+		if (frm.doc.file) {
 			frm.add_custom_button(__("Check File for Issues"), () => frm.save());
 		}
 
@@ -64,10 +81,27 @@ is_attendance.clocking_import.render_status = function (frm) {
 				])
 			);
 		}
+		// A file no longer has to be 100% resolved before anything imports -
+		// resolvable_count says whether Start Import will actually do
+		// something right now, or whether nothing here is importable yet.
+		const readiness = frm.doc.resolvable_count
+			? __("{0} of {1} rows are ready to import now - click Start Import to bring those in.", [
+					frm.doc.resolvable_count,
+					frm.doc.total_rows,
+			  ])
+			: __("Nothing in this file can be imported yet.");
+		frm.dashboard.set_headline_alert(
+			`<div class="row"><div class="col-xs-12">${__("Missing information - {0}. {1}", [
+				parts.join("; "),
+				readiness,
+			])}</div></div>`,
+			"orange"
+		);
+	} else if (status === "Partially Imported") {
 		frm.dashboard.set_headline_alert(
 			`<div class="row"><div class="col-xs-12">${__(
-				"Missing information - {0}. Resolve this, then save.",
-				[parts.join("; ")]
+				"Partially imported - {0} Employee Checkin(s) created so far. {1} employee code(s) are still unresolved (see Issues below); map them and click Start Import again to bring in the rest.",
+				[(frm.doc.created_checkins || []).length, frm.doc.unresolved_count]
 			)}</div></div>`,
 			"orange"
 		);

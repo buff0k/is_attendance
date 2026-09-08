@@ -56,9 +56,12 @@ Each cycle (`heartbeat_interval_seconds` in the config, default 60s):
 1. GETs `list_pending_pull_requests` - every Sage Payroll Run currently at
    Status "Pull Requested", with the Sage Company Number and Paypoints
    each one needs (read from that Run's own `Sage Payroll Company` record
-   on the Frappe side - not from this script's local config, so a
-   Paypoint added in Frappe takes effect without this file needing an
-   edit + restart too).
+   on the Frappe side - Frappe is the sole source of truth for Paypoints,
+   this script's local config doesn't hold them at all, so a Paypoint
+   added or removed in Frappe takes effect on the very next poll with
+   nothing here to edit or restart). A Run whose Company currently has no
+   Paypoints configured in Frappe is skipped with a log warning, not
+   silently pulled with a stale list.
 2. For each request whose Company Number matches a **configured and
    enabled** entry in `sage_employee_puller.json`, connects to that
    Company's own ODBC DSN (`DSN=VIP_Company001;UID=;PWD=;` - blank
@@ -73,8 +76,9 @@ Each cycle (`heartbeat_interval_seconds` in the config, default 60s):
    several bench instances (or a future second Windows host) share the
    same polling endpoint without stepping on each other.
 
-Config is re-read every cycle, so enabling a new company or editing its
-Paypoint list doesn't need the heartbeat restarted.
+This local config file (`companies` - the DSN mapping) is re-read every
+cycle too, so enabling/disabling a company or changing its DSN doesn't
+need the heartbeat restarted either.
 
 **The query, exactly as found** (see the script's own module docstring
 for the full byte-search evidence):
@@ -112,18 +116,21 @@ pick up a Sage-side correction.
   "api_secret": "...",
   "heartbeat_interval_seconds": 60,
   "companies": [
-    { "sage_company_no": "001", "dsn": "VIP_Company001",
-      "paypoints": ["BKN", "UADT"], "enabled": true }
+    { "sage_company_no": "001", "dsn": "VIP_Company001", "enabled": true }
   ]
 }
 ```
 
-`companies` needs one entry per Sage Company Number this bench instance
-handles - `paypoints` here is only a fallback (the live Paypoint list
-comes from Frappe's own `Sage Payroll Company` record on each poll); keep
-it roughly in sync anyway so a request still has something to fall back to
-if that field is ever missing from a response. Adding a new site later is
-just: add its Paypoint on the `Sage Payroll Company` doctype in Frappe.
+`companies` is just a local DSN mapping + on/off switch, one entry per
+Sage Company Number this host can serve - nothing else. Paypoints, Branch
+mapping, and the Amt column layout all live on the `Sage Payroll Company`
+doctype in Frappe and are read fresh on every poll, deliberately not
+duplicated here - Frappe is the one source of truth for that data, so a
+Paypoint added, removed, or moved to a different Branch in Frappe takes
+effect on the next poll with nothing local to keep in sync. Adding a new
+site later is just: add its Paypoint on the `Sage Payroll Company` doctype
+in Frappe (only a brand-new *Company Number* - a new DSN - needs an entry
+added here).
 
 **Run it**: `python sage_employee_puller.py` (needs `pyodbc` and
 `requests` installed, plus the same Sybase SQL Anywhere / iAnywhere ODBC
