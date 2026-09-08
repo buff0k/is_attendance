@@ -36,6 +36,8 @@ was never actually missing in the first place.
 
 from __future__ import annotations
 
+from statistics import median
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -117,6 +119,13 @@ class ClockingAdjustment(Document):
 			},
 			fields=["name", "leave_type", "status", "half_day", "half_day_date", "from_date", "to_date"],
 		)
+		if not applications:
+			return {}
+
+		# Computed once for the employee, not per leave date - it's meant as
+		# one representative "this is roughly when they normally work"
+		# window, not a per-day fact.
+		shift_start_minutes, shift_end_minutes = _infer_typical_shift_minutes(self.employee, self.to_date)
 
 		info: dict[str, dict] = {}
 		for application in applications:
@@ -133,6 +142,8 @@ class ClockingAdjustment(Document):
 					"leave_type": application.leave_type,
 					"status": application.status,
 					"half_day": bool(half_day_date and half_day_date == current),
+					"shift_start_minutes": shift_start_minutes,
+					"shift_end_minutes": shift_end_minutes,
 				}
 				current = add_days(current, 1)
 
@@ -326,3 +337,67 @@ class ClockingAdjustment(Document):
 
 		for employee, date in all_dates:
 			recompute_attendance_for_employee_day(employee, date)
+
+
+SHIFT_INFERENCE_LOOKBACK_DAYS = 180  # ~6 months of real history to infer a "typical" window from
+
+
+def _infer_typical_shift_minutes(employee: str, before_date) -> tuple[int | None, int | None]:
+	"""Infers a representative shift window (minutes-of-day, 0-1440) from
+	the employee's own actual Employee Checkin history, not Shift
+	Assignment - this org doesn't use Shift Assignment (Frappe's own
+	floating-shift support isn't sufficient for how shifts actually work
+	here; a separate app will address that later) and isn't expected to
+	any time soon, so real clocking behaviour is the only signal actually
+	available. Lets the roster size a full-day leave block to roughly
+	when this employee normally works instead of guessing at the whole
+	calendar day (a Leave Application only stores dates, never clock
+	times, so there's nothing else to derive "which hours" from).
+
+	Looks back SHIFT_INFERENCE_LOOKBACK_DAYS from `before_date` (the
+	review period's own end - not "today", so reviewing an old period
+	still infers from history that actually precedes it) at every day
+	with a genuinely paired (non-zero, even count) set of checkins, and
+	takes the *median* first-in/last-out across them - median rather than
+	mean so a handful of unusually early/late days don't skew the whole
+	picture. Deliberately ignores days with an odd count (a single
+	stray/incomplete punch is exactly the kind of noise this is trying to
+	average out, not learn from).
+
+	Returns (None, None) - the caller's own signal to fall back to a
+	full-day block - when there isn't enough real history to infer
+	anything from at all (a brand new employee, or one who's never
+	clocked cleanly)."""
+	end = getdate(before_date)
+	start = add_days(end, -SHIFT_INFERENCE_LOOKBACK_DAYS)
+
+	checkins = frappe.get_all(
+		"Employee Checkin",
+		filters={
+			"employee": employee,
+			"time": ["between", [get_datetime(f"{start} 00:00:00"), get_datetime(f"{end} 23:59:59")]],
+		},
+		fields=["time"],
+		order_by="time asc",
+	)
+	if not checkins:
+		return None, None
+
+	by_day: dict = {}
+	for row in checkins:
+		time_value = get_datetime(row.time)
+		by_day.setdefault(getdate(time_value), []).append(time_value)
+
+	first_ins = []
+	last_outs = []
+	for times in by_day.values():
+		times.sort()
+		if len(times) < 2 or len(times) % 2 != 0:
+			continue  # only a genuinely paired day is representative, not noise
+		first_ins.append(times[0].hour * 60 + times[0].minute)
+		last_outs.append(times[-1].hour * 60 + times[-1].minute)
+
+	if not first_ins:
+		return None, None
+
+	return int(median(first_ins)), int(median(last_outs))

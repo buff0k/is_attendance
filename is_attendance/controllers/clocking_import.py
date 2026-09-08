@@ -4,8 +4,13 @@
 """
 Shared plumbing behind the "Clocking Import" doctype - branch resolution,
 Issues tracking, bulk Employee Checkin creation, and the whole Draft ->
-Missing Information -> Pending Import -> Importing -> Completed/Error
-async-submit lifecycle. Format-specific parsing (which shape a given file
+Missing Information -> Pending Import -> Importing -> Partially Imported /
+Completed / Error async-submit lifecycle. A file doesn't have to be 100%
+resolved to start importing - queue_import() only refuses when *nothing*
+in the file resolves yet (see resolvable_row_count()); whatever does
+resolve gets imported, the rest stays in Issues for a later pass, and
+re-running "Start Import" at any point is always safe (create_checkins()
+skips whatever it already created). Format-specific parsing (which shape a given file
 is, and how to read it) lives separately in
 is_attendance.controllers.clocking_parsers - this module doesn't know or
 care which shape produced the rows it's handling, only their shared
@@ -35,8 +40,8 @@ A parsed row, from any source format, is a dict shaped like:
 Every doctype that uses this module must:
 
 - Have fields named exactly: file, branch (Fallback Branch), status,
-  total_rows, unresolved_count, employees_without_branch, issues (Table),
-  created_checkins (Table), import_log.
+  total_rows, unresolved_count, resolvable_count, employees_without_branch,
+  issues (Table), created_checkins (Table), import_log.
 - Its `issues` Table's child doctype must have fields: employee_code,
   machine_id, occurrence_count, first_seen, employee.
 - Its `created_checkins` Table's child doctype must have a `checkin` field.
@@ -218,6 +223,34 @@ def employees_without_branch(rows: list[dict], fallback_branch: str | None) -> s
 	return unresolved
 
 
+def resolvable_row_count(rows: list[dict], fallback_branch: str | None) -> int:
+	"""How many rows could actually produce an Employee Checkin right now -
+	employee resolves AND a Branch is available via any of the three
+	sources create_checkins() itself uses (employee's own Branch, this
+	import's Fallback Branch, or a per-machine Branch mapping). Lets
+	queue_import() start an import pass on a file that isn't fully
+	resolved yet - a file only ever refuses to run when this is zero, i.e.
+	genuinely nothing in it can be imported. Doesn't dedupe by employee
+	the way employees_without_branch does - this counts rows, since that's
+	what queue_import()/the UI actually care about ("is there real work to
+	do"), not distinct people."""
+	if not rows:
+		return 0
+
+	branches = employee_branch_map(rows)
+	machine_branches = clocking_machine_branch_map()
+
+	count = 0
+	for row in rows:
+		employee = resolve_employee(row)
+		if not employee:
+			continue
+		if branches.get(employee) or fallback_branch or machine_branches.get(row.get("machine_id")):
+			count += 1
+
+	return count
+
+
 def apply_resolved_issues(doc) -> set[str]:
 	"""For every issues row the user has filled an Employee into, write
 	that mapping onto Employee.attendance_device_id permanently (unless
@@ -333,13 +366,26 @@ def refresh_readiness(doc, rows: list[dict]) -> bool:
 	uses this module.
 
 	Also propagates a newly-resolved employee code to every other Draft
-	import document still stuck on it (resync_other_drafts), and - if this
-	save is the one that just made the document ready for the first time -
-	flags it to be queued automatically once the save commits (see
-	after_save_hook() below), so resolving the mapping is the only manual
-	step ever required; nothing needs a second click to actually start
-	importing."""
-	previous_status = doc.status
+	import document still stuck on it (resync_other_drafts), and flags a
+	background import pass to be queued automatically once the save
+	commits (see after_save_hook() below) whenever this save left *more*
+	rows resolvable than before - not only once every row resolves.
+	Resolving a mapping is the only manual step that should ever be
+	required, whether that fix finishes the file outright or only chips
+	away at it; a partial fix deserves the same "just happens" treatment
+	the fully-resolved case already gets, not a second "Start Import"
+	click nobody's told to expect. Also covers the very first validate()
+	on a freshly-attached file (resolvable_count starts at 0), so a file
+	with some immediately-resolvable rows starts importing on its own,
+	which is what unattended callers like erp_uploader.py already assume
+	happens.
+
+	Also computes resolvable_count (see resolvable_row_count()) - distinct
+	from `ready`, which still means "100% resolved" and drives Pending
+	Import/Completed exactly as before. resolvable_count is what lets
+	queue_import() start a *partial* pass on a file that isn't there yet.
+	"""
+	previous_resolvable_count = doc.resolvable_count or 0
 
 	newly_resolved = apply_resolved_issues(doc)
 	rebuild_issues(doc, rows)
@@ -350,10 +396,18 @@ def refresh_readiness(doc, rows: list[dict]) -> bool:
 	doc.total_rows = len(rows)
 	doc.unresolved_count = len(doc.issues)
 	doc.employees_without_branch = ", ".join(missing_branch)
+	doc.resolvable_count = resolvable_row_count(rows, doc.branch)
 
 	ready = not doc.issues and not missing_branch
 
-	if ready and previous_status != "Pending Import":
+	# Strictly more resolvable than before - covers reaching full
+	# readiness (subsumes the old "ready and wasn't already Pending
+	# Import" check: nothing to gain from re-triggering a save that
+	# changed nothing) and every partial improvement in between, without
+	# re-triggering a save that didn't actually change what can import
+	# (e.g. an unrelated field edit, or two documents racing to resolve
+	# the same code via resync_other_drafts).
+	if doc.resolvable_count > previous_resolvable_count:
 		doc.flags._auto_queue_after_save = True
 
 	return ready
@@ -401,7 +455,14 @@ def before_submit_guard(doc) -> None:
 def queue_import(doc) -> None:
 	"""Shared queue_import() body - the whitelisted "Start Import" entry
 	point. Callers: @frappe.whitelist() def queue_import(self):
-	clocking_import.queue_import(self)"""
+	clocking_import.queue_import(self)
+
+	Doesn't require every row to resolve - only refuses when *nothing* in
+	the file resolves yet (doc.resolvable_count == 0, from
+	refresh_readiness()). A file with some resolvable rows and some
+	genuine stragglers proceeds; run_import_job() decides afterward
+	whether that lands on "Completed" or "Partially Imported" based on
+	what's actually still unresolved once the pass finishes."""
 	if doc.docstatus != 0:
 		frappe.throw(_("This import has already been submitted."))
 
@@ -409,7 +470,9 @@ def queue_import(doc) -> None:
 		frappe.throw(_("Attach a file first."))
 
 	rows = doc.parse_file()
-	if not refresh_readiness(doc, rows):
+	ready = refresh_readiness(doc, rows)
+
+	if not ready and not doc.resolvable_count:
 		problems = []
 		if doc.issues:
 			problems.append(
@@ -423,7 +486,7 @@ def queue_import(doc) -> None:
 				)
 			)
 		frappe.throw(
-			_("Cannot start the import - {0}. Resolve this first (see Missing Information).").format(
+			_("Nothing in this file can be imported yet - {0}. Resolve at least one of these first.").format(
 				"; ".join(problems)
 			)
 		)
@@ -487,11 +550,16 @@ def queue_import_by_name(doctype: str, docname: str) -> None:
 	"""Background entry point for after_save_hook()'s deferred auto-queue -
 	reloads the document fresh (past the triggering save's own in-memory
 	state) and starts the import exactly as queue_import()'s "Start
-	Import" button would, but only if it's still genuinely sitting at
-	Pending Import - something could in principle have changed in the
-	moment between the save and this job running."""
+	Import" button would, but only if it's still genuinely a Draft with
+	something resolvable - something could in principle have changed in
+	the moment between the save and this job running. Status can be
+	"Pending Import" (fully resolved), "Missing Information" (partially
+	resolved, or the file's very first validate()), or "Partially
+	Imported" (already ran once, more resolved now) - refresh_readiness()
+	flags the auto-queue for all three whenever resolvable_count went up,
+	not only the fully-resolved case."""
 	doc = frappe.get_doc(doctype, docname)
-	if doc.docstatus == 0 and doc.status == "Pending Import":
+	if doc.docstatus == 0 and doc.resolvable_count:
 		queue_import(doc)
 
 
@@ -515,29 +583,54 @@ def run_import_job(doctype: str, docname: str) -> None:
 	# work starts.
 	try:
 		rows = doc.parse_file()
-		created, skipped = create_checkins(doc, rows)
+		created, skipped, skipped_unresolved = create_checkins(doc, rows)
 		new_machines = sync_clocking_machines(rows, doc.doctype, doc.name)
 
-		doc.status = "Completed"
+		# queue_import()'s own refresh_readiness() call, just before this job
+		# was enqueued, already computed doc.issues/employees_without_branch
+		# for the current file - create_checkins() doesn't resolve employee
+		# codes or change that, so it's still accurate to check here rather
+		# than recomputing (which would also needlessly re-run
+		# resync_other_drafts()).
+		fully_done = not doc.issues and not doc.employees_without_branch
+
 		log_lines = [
 			f"Rows in file: {len(rows)}",
 			f"Checkins created: {created}",
 			f"Rows already imported (skipped): {skipped}",
 		]
+		if skipped_unresolved:
+			log_lines.append(f"Rows still blocked (unresolved employee/branch): {skipped_unresolved}")
 		if new_machines:
 			log_lines.append(
 				f"New clocking machine(s) detected, added to IS Attendance Settings with "
 				f"no Branch set yet: {', '.join(new_machines)}"
 			)
 		doc.import_log = "\n".join(log_lines)
-		doc.save(ignore_permissions=True)
 
-		# Only now - once the import has actually, fully succeeded - does
-		# the document become Submitted. before_submit_guard() also
-		# independently refuses to let this (or any other caller) proceed
-		# unless status is already "Completed", so this property doesn't
-		# depend on nothing else calling submit() early.
-		doc.submit()
+		if fully_done:
+			doc.status = "Completed"
+			doc.save(ignore_permissions=True)
+
+			# Only now - once the import has actually, fully succeeded - does
+			# the document become Submitted. before_submit_guard() also
+			# independently refuses to let this (or any other caller) proceed
+			# unless status is already "Completed", so this property doesn't
+			# depend on nothing else calling submit() early.
+			doc.submit()
+		else:
+			# Some rows imported, some genuinely still blocked - stays a
+			# Draft (never submitted) so it can be re-run once the
+			# stragglers resolve, exactly like "Missing Information" was
+			# already a resting Draft state, just now reachable *after*
+			# real Checkins have been created rather than only before any
+			# import ran. Resolving the last Issue later flips status back
+			# to "Pending Import" (validate_import(), unchanged) and
+			# auto-queues a finishing pass (refresh_readiness()'s existing
+			# _auto_queue_after_save flag) with no further code needed here.
+			doc.status = "Partially Imported"
+			doc.save(ignore_permissions=True)
+			frappe.db.commit()
 	except Exception as error:
 		frappe.db.rollback()
 
@@ -554,18 +647,33 @@ def run_import_job(doctype: str, docname: str) -> None:
 		# the chance to happen; a file that's perfectly importable
 		# shouldn't need a human to notice and manually re-click "Start
 		# Import" just because it happened to race another import.
-		if frappe.db.is_deadlocked(error) or frappe.db.is_timedout(error):
+		#
+		# Checking isinstance against Frappe's own QueryDeadlockError/
+		# QueryTimeoutError, not frappe.db.is_deadlocked()/is_timedout() -
+		# those two expect the *raw* driver exception (e.args[0] is the
+		# numeric MySQL error code), but frappe.db.sql() has already
+		# classified and wrapped it into one of these two by the time it
+		# gets here (see frappe/database/database.py's own sql()) - calling
+		# is_deadlocked() again on the wrapper compares the wrong thing
+		# (args[0] is the original exception object, not a code) and always
+		# returns False, silently defeating this whole retry path. Confirmed
+		# live: a real error 1020 ("Record has changed since last read in
+		# table 'tabSeries'") - genuine naming-series contention from many
+		# imports becoming ready at once - was landing at "Error" instead of
+		# being retried, exactly because of this mismatch.
+		if isinstance(error, (frappe.QueryDeadlockError, frappe.QueryTimeoutError)):
 			raise
 
-		# Genuine failure - the "should theoretically not be possible"
-		# case: queue_import() already verified every row resolves before
-		# enqueueing this job, so reaching here means something changed
-		# *after* that check (an Employee/Branch got edited or deleted
-		# mid-flight, a real bug) or was a non-transient DB error. Whatever
-		# partial work this attempt did (some checkins inserted, in-memory
-		# created_checkins rows, etc.) is undone by the rollback above;
-		# reload discards the now-inconsistent in-memory state before
-		# recording the failure.
+		# Genuine failure - the "should theoretically not be possible" case:
+		# queue_import() already verified at least one row resolves before
+		# enqueueing this job (create_checkins() itself tolerates the rest
+		# not resolving, see its own skipped_unresolved handling), so
+		# reaching here means something else went wrong (an Employee/Branch
+		# got edited or deleted mid-flight, a real bug) or was a
+		# non-transient DB error. Whatever partial work this attempt did
+		# (some checkins inserted, in-memory created_checkins rows, etc.) is
+		# undone by the rollback above; reload discards the now-inconsistent
+		# in-memory state before recording the failure.
 		doc.reload()
 		doc.flags._clocking_import_pipeline_active = True
 		doc.status = "Error"
@@ -574,7 +682,7 @@ def run_import_job(doctype: str, docname: str) -> None:
 		frappe.db.commit()
 
 
-def create_checkins(doc, rows: list[dict]) -> tuple[int, int]:
+def create_checkins(doc, rows: list[dict]) -> tuple[int, int, int]:
 	"""Bulk-create Employee Checkins for every row that doesn't already
 	exist (idempotent - dedup key is employee+time+isa_clocking_machine),
 	stamping full provenance (isa_import_doctype/isa_import_reference via
@@ -587,9 +695,17 @@ def create_checkins(doc, rows: list[dict]) -> tuple[int, int]:
 	IS Attendance Settings.clocking_machines' mapping for that row's own
 	machine_id (see clocking_machine_branch_map()). A device's mapping is
 	always the last resort, never an override of the employee's own Branch
-	or an explicitly-set Fallback Branch."""
+	or an explicitly-set Fallback Branch.
+
+	Rows whose employee code doesn't resolve at all, or resolves but has
+	no Branch from any of the three sources, are counted
+	(skipped_unresolved) and left alone rather than raised - queue_import()
+	no longer guarantees every row resolves before this runs (see its own
+	docstring), so this has to tolerate genuine stragglers instead of
+	assuming they can't appear. Returns (created, skipped, skipped_unresolved)."""
 	created = 0
 	skipped = 0
+	skipped_unresolved = 0
 	affected: set[tuple[str, object]] = set()
 
 	branches = employee_branch_map(rows)
@@ -608,7 +724,11 @@ def create_checkins(doc, rows: list[dict]) -> tuple[int, int]:
 		for row in rows:
 			employee = resolve_employee(row)
 			machine_id = row.get("machine_id")
-			branch = branches.get(employee) or doc.branch or machine_branches.get(machine_id)
+			branch = branches.get(employee) or doc.branch or machine_branches.get(machine_id) if employee else None
+
+			if not employee or not branch:
+				skipped_unresolved += 1
+				continue
 
 			if frappe.db.exists(
 				"Employee Checkin",
@@ -679,7 +799,7 @@ def create_checkins(doc, rows: list[dict]) -> tuple[int, int]:
 	for employee, attendance_date in affected:
 		recompute_attendance_for_employee_day(employee, attendance_date)
 
-	return created, skipped
+	return created, skipped, skipped_unresolved
 
 
 def cancel_import(doc) -> None:

@@ -13,6 +13,7 @@
   "counts_section",
   "total_rows",
   "column_break_counts",
+  "resolvable_count",
   "unresolved_count",
   "employees_without_branch",
   "issues_section",
@@ -45,13 +46,13 @@
   },
   {
    "default": "Not Parsed",
-   "description": "Not Parsed: no file attached yet. Missing Information: file parsed but some employee codes/branches don't resolve. Pending Import: everything resolves, ready for Start Import. Importing: the background job is running. Completed: submitted. Error: the background job failed after being queued - see Import Log.",
+   "description": "Not Parsed: no file attached yet. Missing Information: file parsed, and either nothing or only some of it resolves. Pending Import: everything resolves, ready for Start Import. Importing: the background job is running. Partially Imported: the background job finished, but some rows were still unresolved - the resolvable ones already became real Employee Checkins, Start Import again once the rest are mapped. Completed: fully resolved and submitted. Error: the background job failed after being queued - see Import Log.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Not Parsed\nMissing Information\nPending Import\nImporting\nCompleted\nError",
+   "options": "Not Parsed\nMissing Information\nPending Import\nImporting\nPartially Imported\nCompleted\nError",
    "read_only": 1
   },
   {
@@ -77,6 +78,13 @@
   {
    "fieldname": "column_break_counts",
    "fieldtype": "Column Break"
+  },
+  {
+   "description": "How many rows in the file can produce a Checkin right now (employee resolves and a Branch is available). Start Import only ever refuses when this is zero - otherwise it imports whatever's ready and leaves the rest in Issues below for a later pass.",
+   "fieldname": "resolvable_count",
+   "fieldtype": "Int",
+   "label": "Rows Ready Now",
+   "read_only": 1
   },
   {
    "fieldname": "unresolved_count",
@@ -137,7 +145,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-07 08:00:00.000000",
+ "modified": "2026-09-07 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Clocking Import",
