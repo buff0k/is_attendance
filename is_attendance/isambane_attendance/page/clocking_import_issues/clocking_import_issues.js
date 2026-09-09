@@ -267,14 +267,14 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 		}
 
 		this.$codes_table.html(`
-			<table class="cii-table">
+			<table class="cii-table cii-table-fixed">
 				<thead>
 					<tr>
-						<th>${__("Employee Code")}</th>
-						<th>${__("Occurrences")}</th>
-						<th>${__("Documents")}</th>
-						<th>${__("First Seen")}</th>
-						<th>${__("Machine ID(s)")}</th>
+						<th class="cii-col-code">${__("Employee Code")}</th>
+						<th class="cii-col-narrow">${__("Occurrences")}</th>
+						<th class="cii-col-narrow">${__("Documents")}</th>
+						<th class="cii-col-date">${__("First Seen")}</th>
+						<th class="cii-col-truncate">${__("Machine ID(s)")}</th>
 						<th class="cii-col-employee">${__("Employee")}</th>
 					</tr>
 				</thead>
@@ -291,7 +291,7 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 					<td><span class="cii-badge">${row.occurrence_count}</span></td>
 					<td>${row.document_count}</td>
 					<td class="text-muted">${row.first_seen ? frappe.datetime.str_to_user(row.first_seen) : ""}</td>
-					<td class="text-muted">${frappe.utils.escape_html(row.machine_ids || "")}</td>
+					<td class="text-muted cii-col-truncate" title="${frappe.utils.escape_html(row.machine_ids || "")}">${frappe.utils.escape_html(row.machine_ids || "")}</td>
 					<td class="employee-cell"></td>
 				</tr>
 			`).appendTo($tbody);
@@ -335,13 +335,13 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 		}
 
 		this.$machines_table.html(`
-			<table class="cii-table">
+			<table class="cii-table cii-table-fixed">
 				<thead>
 					<tr>
-						<th>${__("Machine ID")}</th>
-						<th>${__("Brand")}</th>
-						<th>${__("Model")}</th>
-						<th>${__("Location / Notes")}</th>
+						<th class="cii-col-truncate">${__("Machine ID")}</th>
+						<th class="cii-col-narrow">${__("Brand")}</th>
+						<th class="cii-col-narrow">${__("Model")}</th>
+						<th class="cii-col-truncate">${__("Location / Notes")}</th>
 						<th class="cii-col-employee">${__("Branch")}</th>
 						<th class="cii-col-action"></th>
 					</tr>
@@ -356,10 +356,10 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 			const href = `/app/is-attendance-clocking-machine/${encodeURIComponent(row.name)}`;
 			const $tr = $(`
 				<tr>
-					<td><a href="${href}" target="_blank">${frappe.utils.escape_html(row.machine_id)}</a></td>
+					<td class="cii-col-truncate" title="${frappe.utils.escape_html(row.machine_id)}"><a href="${href}" target="_blank">${frappe.utils.escape_html(row.machine_id)}</a></td>
 					<td class="text-muted">${frappe.utils.escape_html(row.brand || "")}</td>
 					<td class="text-muted">${frappe.utils.escape_html(row.model || "")}</td>
-					<td class="text-muted">${frappe.utils.escape_html(row.location_notes || "")}</td>
+					<td class="text-muted cii-col-truncate" title="${frappe.utils.escape_html(row.location_notes || "")}">${frappe.utils.escape_html(row.location_notes || "")}</td>
 					<td class="branch-cell"></td>
 					<td><button class="btn btn-xs btn-primary save-branch-btn">${__("Save")}</button></td>
 				</tr>
@@ -523,10 +523,24 @@ function cii_ensure_style() {
 		.cii-section-header h4 { margin: 0 0 4px; }
 		.cii-section-header p { margin: 0; font-size: 12px; }
 
-		.cii-table-wrap { overflow-x: auto; }
+		.cii-table-wrap { overflow-x: auto; width: 100%; max-width: 100%; min-width: 0; }
 		.cii-empty { padding: 24px 18px; color: var(--text-muted); font-size: 13px; }
 
-		.cii-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+		.cii-table { width: 100%; max-width: 100%; border-collapse: collapse; font-size: 13px; }
+		/* table-layout: fixed is the actual fix here - without it, a single
+		   long unbroken value (many machines on one code, a long free-text
+		   note) forces its own column past its share of the table's width,
+		   and the table as a whole silently renders wider than its own
+		   100% - which on real data (more machines per code, longer notes
+		   than this app's own lab-bench test data ever had) is exactly
+		   what pushed the whole page into a horizontal scroll rather than
+		   staying contained inside .cii-table-wrap's own overflow-x. Fixed
+		   layout makes column widths predictable (driven by the header
+		   row's own CSS, not content), so the table can never exceed its
+		   own width regardless of what a row happens to contain - long
+		   content in a .cii-col-truncate cell is truncated with an
+		   ellipsis (full value still in its title attribute) instead. */
+		.cii-table-fixed { table-layout: fixed; }
 		.cii-table th {
 			text-align: left;
 			font-weight: 600;
@@ -537,17 +551,28 @@ function cii_ensure_style() {
 			padding: 10px 14px;
 			border-bottom: 1px solid var(--border-color, #d1d8dd);
 			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 		.cii-table td {
 			padding: 8px 14px;
 			border-bottom: 1px solid var(--border-color, #eef1f2);
 			vertical-align: middle;
-			white-space: nowrap;
+			overflow-wrap: break-word;
 		}
 		.cii-table tbody tr:hover { background: var(--control-bg, #f4f5f6); }
 		.cii-table tbody tr:last-child td { border-bottom: none; }
+		.cii-col-code { width: 130px; }
+		.cii-col-narrow { width: 90px; }
+		.cii-col-date { width: 130px; }
 		.cii-col-employee { width: 220px; }
 		.cii-col-action { width: 90px; }
+		.cii-col-truncate {
+			max-width: 0; /* with table-layout: fixed, forces this column to respect its computed share instead of growing to fit content */
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
 
 		.cii-code-pill {
 			display: inline-block;

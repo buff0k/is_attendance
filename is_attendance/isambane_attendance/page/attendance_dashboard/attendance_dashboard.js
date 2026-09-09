@@ -1,7 +1,38 @@
 // Copyright (c) 2026, BuFf0k and contributors
 // For license information, please see license.txt
 
+/*
+ * Same visual language as the Clocking Import Issues page (stat cards,
+ * donut charts via frappe.Chart, a restyled table) - see that page's own
+ * comments for the reasoning behind each pattern reused here (fixed
+ * table layout + truncation to avoid a wide-content horizontal scroll,
+ * the injected <style> block, etc.). Every number and chart here is
+ * derived straight from the Attendance Compliance Summary report's own
+ * rows (frappe.desk.query_report.run) - no separate stats endpoint,
+ * since every column a chart needs (weekday_missed, total_missed, ...)
+ * is already on each row.
+ */
+
 const REPORT_NAME = "Attendance Compliance Summary";
+
+const AD_METRICS = ["missed", "no_out", "no_in", "late_in", "early_out"];
+const AD_METRIC_LABELS = {
+	missed: __("Missed"),
+	no_out: __("No Out"),
+	no_in: __("No In"),
+	late_in: __("Late In"),
+	early_out: __("Early Out"),
+};
+const AD_METRIC_COLORS = {
+	missed: "#ef4444",
+	no_out: "#f97316",
+	no_in: "#f59e0b",
+	late_in: "#eab308",
+	early_out: "#ec4899",
+};
+const AD_DAY_TYPES = ["weekday", "saturday", "sunday"];
+const AD_DAY_TYPE_LABELS = { weekday: __("Weekday"), saturday: __("Saturday"), sunday: __("Sunday") };
+const AD_DAY_TYPE_COLORS = { weekday: "#3b82f6", saturday: "#f59e0b", sunday: "#ef4444" };
 
 frappe.pages["attendance-dashboard"].on_page_load = function (wrapper) {
 	const page = frappe.ui.make_app_page({
@@ -26,6 +57,7 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 		// resolves throws and aborts the rest of the page's setup. Load it
 		// explicitly first.
 		frappe.model.with_doctype("Attendance Dashboard Employee", () => {
+			ad_ensure_style();
 			this.make_filters();
 			this.make_body();
 			this.run();
@@ -157,14 +189,22 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 
 	make_body() {
 		this.$body = $(`
-			<div class="attendance-dashboard">
-				<div class="attendance-summary row" style="margin: 15px 0;"></div>
-				<div class="attendance-table" style="margin-top: 15px; overflow-x: auto;"></div>
+			<div class="ad-page">
+				<div class="ad-stats-row"></div>
+				<div class="ad-charts-row"></div>
+				<div class="ad-section">
+					<div class="ad-section-header">
+						<h4>${__("Employees")}</h4>
+						<p class="text-muted">${__("Click a row to see its own day-by-day breakdown for the period.")}</p>
+					</div>
+					<div class="ad-table-wrap"></div>
+				</div>
 			</div>
 		`).appendTo(this.page.main);
 
-		this.$summary = this.$body.find(".attendance-summary");
-		this.$table = this.$body.find(".attendance-table");
+		this.$stats_row = this.$body.find(".ad-stats-row");
+		this.$charts_row = this.$body.find(".ad-charts-row");
+		this.$table = this.$body.find(".ad-table-wrap");
 	}
 
 	get_filter_values() {
@@ -196,46 +236,111 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 	render(message) {
 		this.columns = (message && message.columns) || [];
 		this.rows = (message && message.result) || [];
-		this.render_summary(this.rows);
+		this.render_stats(this.rows);
 		this.render_table(this.columns, this.rows);
 	}
 
-	render_summary(rows) {
-		const totals = { missed: 0, no_out: 0, no_in: 0, late_in: 0, early_out: 0 };
-		const day_types = ["weekday", "saturday", "sunday"];
+	render_stats(rows) {
+		const metric_totals = { missed: 0, no_out: 0, no_in: 0, late_in: 0, early_out: 0 };
+		const day_type_totals = { weekday: 0, saturday: 0, sunday: 0 };
+		let employees_with_issues = 0;
 
 		for (const row of rows) {
-			for (const metric of Object.keys(totals)) {
-				for (const day_type of day_types) {
-					totals[metric] += row[`${day_type}_${metric}`] || 0;
+			let row_has_issue = false;
+			for (const metric of AD_METRICS) {
+				const total = row[`total_${metric}`] || 0;
+				metric_totals[metric] += total;
+				if (total) row_has_issue = true;
+
+				for (const day_type of AD_DAY_TYPES) {
+					day_type_totals[day_type] += row[`${day_type}_${metric}`] || 0;
 				}
 			}
+			if (row_has_issue) employees_with_issues += 1;
 		}
 
-		const labels = {
-			missed: __("Missed"),
-			no_out: __("No Out"),
-			no_in: __("No In"),
-			late_in: __("Late In"),
-			early_out: __("Early Out"),
-		};
+		const total_flags = AD_METRICS.reduce((sum, metric) => sum + metric_totals[metric], 0);
 
-		this.$summary.empty();
-		for (const metric of Object.keys(totals)) {
-			$(`
-				<div class="col-sm-2">
-					<div class="frappe-card" style="padding: 15px; text-align: center;">
-						<div style="font-size: 22px; font-weight: bold;">${totals[metric]}</div>
-						<div class="text-muted">${labels[metric]}</div>
-					</div>
-				</div>
-			`).appendTo(this.$summary);
-		}
+		const cards = [
+			{ label: __("Employees Shown"), value: rows.length, tone: "neutral" },
+			{
+				label: __("Employees With Issues"),
+				value: employees_with_issues,
+				sub: __("of {0}", [rows.length]),
+				tone: employees_with_issues ? "bad" : "good",
+			},
+			{ label: __("Missed"), value: metric_totals.missed, tone: metric_totals.missed ? "bad" : "good" },
+			{ label: __("No Out"), value: metric_totals.no_out, tone: metric_totals.no_out ? "bad" : "good" },
+			{ label: __("No In"), value: metric_totals.no_in, tone: metric_totals.no_in ? "bad" : "good" },
+			{ label: __("Late In"), value: metric_totals.late_in, tone: metric_totals.late_in ? "bad" : "good" },
+			{ label: __("Early Out"), value: metric_totals.early_out, tone: metric_totals.early_out ? "bad" : "good" },
+		];
+
+		this.$stats_row.html(
+			cards
+				.map(
+					(card) => `
+						<div class="ad-stat-card ad-tone-${card.tone}">
+							<div class="ad-stat-value">${card.value ?? 0}</div>
+							<div class="ad-stat-label">${card.label}</div>
+							${card.sub ? `<div class="ad-stat-sub">${card.sub}</div>` : ""}
+						</div>
+					`
+				)
+				.join("")
+		);
+
+		this.render_charts(rows.length, employees_with_issues, metric_totals, total_flags, day_type_totals);
+	}
+
+	render_charts(total_employees, employees_with_issues, metric_totals, total_flags, day_type_totals) {
+		this.$charts_row.html(`
+			<div class="ad-chart-card">
+				<div class="ad-chart-title">${__("Compliance Flags Breakdown")}</div>
+				<div id="ad-chart-flags"></div>
+			</div>
+			<div class="ad-chart-card">
+				<div class="ad-chart-title">${__("Employees: Clean vs With Issues")}</div>
+				<div id="ad-chart-employees"></div>
+			</div>
+			<div class="ad-chart-card">
+				<div class="ad-chart-title">${__("Flags by Day Type")}</div>
+				<div id="ad-chart-daytype"></div>
+			</div>
+		`);
+
+		const metrics_present = AD_METRICS.filter((metric) => metric_totals[metric] > 0);
+		ad_render_donut(
+			"#ad-chart-flags",
+			metrics_present.map((metric) => AD_METRIC_LABELS[metric]),
+			metrics_present.map((metric) => metric_totals[metric]),
+			metrics_present.map((metric) => AD_METRIC_COLORS[metric]),
+			total_flags
+		);
+
+		const employees_clean = total_employees - employees_with_issues;
+		ad_render_donut(
+			"#ad-chart-employees",
+			[__("Clean"), __("With Issues")],
+			[employees_clean, employees_with_issues],
+			["#22c55e", "#ef4444"],
+			total_employees
+		);
+
+		const day_types_present = AD_DAY_TYPES.filter((day_type) => day_type_totals[day_type] > 0);
+		const total_day_type_flags = AD_DAY_TYPES.reduce((sum, day_type) => sum + day_type_totals[day_type], 0);
+		ad_render_donut(
+			"#ad-chart-daytype",
+			day_types_present.map((day_type) => AD_DAY_TYPE_LABELS[day_type]),
+			day_types_present.map((day_type) => day_type_totals[day_type]),
+			day_types_present.map((day_type) => AD_DAY_TYPE_COLORS[day_type]),
+			total_day_type_flags
+		);
 	}
 
 	render_table(columns, rows) {
 		if (!columns.length) {
-			this.$table.html(`<p class="text-muted">${__("No data for the selected filters.")}</p>`);
+			this.$table.html(`<div class="ad-empty">${__("No data for the selected filters.")}</div>`);
 			return;
 		}
 
@@ -244,46 +349,42 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 		// filter set must never be shown under a new set of results.
 		this._detail_cache = {};
 
-		const metric_labels = {
-			total_missed: __("Missed"),
-			total_no_out: __("No Out"),
-			total_no_in: __("No In"),
-			total_late_in: __("Late In"),
-			total_early_out: __("Early Out"),
-		};
-		const metric_keys = Object.keys(metric_labels);
-		const colspan = metric_keys.length + 5;
+		const colspan = AD_METRICS.length + 5;
 
 		const header = `
-			<th style="width: 24px;"></th>
-			<th>${__("Employee")}</th>
+			<th class="ad-col-narrow"></th>
+			<th class="ad-col-code">${__("Employee")}</th>
 			<th>${__("Employee Name")}</th>
-			<th>${__("Branch")}</th>
-			${metric_keys.map((key) => `<th>${metric_labels[key]}</th>`).join("")}
-			<th></th>
+			<th class="ad-col-code">${__("Branch")}</th>
+			${AD_METRICS.map((metric) => `<th class="ad-col-narrow">${AD_METRIC_LABELS[metric]}</th>`).join("")}
+			<th class="ad-col-action"></th>
 		`;
 
 		const body = rows
 			.map((row) => {
 				const employee = frappe.utils.escape_html(row.employee ?? "");
+				const row_has_issue = AD_METRICS.some((metric) => row[`total_${metric}`]);
 				return `
-					<tr class="summary-row" data-employee="${employee}">
-						<td class="drill-toggle" style="cursor: pointer;">&#9656;</td>
+					<tr class="ad-summary-row ${row_has_issue ? "ad-row-issue" : ""}" data-employee="${employee}">
+						<td class="ad-drill-toggle">&#9656;</td>
 						<td>${employee}</td>
-						<td>${frappe.utils.escape_html(row.employee_name ?? "")}</td>
-						<td>${frappe.utils.escape_html(row.branch ?? "")}</td>
-						${metric_keys.map((key) => `<td>${row[key] ?? 0}</td>`).join("")}
-						<td><button class="btn btn-xs btn-default create-adjustment-btn">${__("Create Clocking Adjustment")}</button></td>
+						<td class="ad-col-truncate" title="${frappe.utils.escape_html(row.employee_name ?? "")}">${frappe.utils.escape_html(row.employee_name ?? "")}</td>
+						<td class="ad-col-truncate" title="${frappe.utils.escape_html(row.branch ?? "")}">${frappe.utils.escape_html(row.branch ?? "")}</td>
+						${AD_METRICS.map((metric) => {
+							const value = row[`total_${metric}`] ?? 0;
+							return `<td>${value ? `<span class="ad-badge">${value}</span>` : `<span class="text-muted">0</span>`}</td>`;
+						}).join("")}
+						<td><button class="btn btn-xs btn-default ad-create-adjustment-btn">${__("Create Clocking Adjustment")}</button></td>
 					</tr>
-					<tr class="detail-row" data-employee="${employee}" style="display: none;">
-						<td colspan="${colspan}"><div class="detail-container text-muted">${__("Loading...")}</div></td>
+					<tr class="ad-detail-row" data-employee="${employee}" style="display: none;">
+						<td colspan="${colspan}"><div class="ad-detail-container text-muted">${__("Loading...")}</div></td>
 					</tr>
 				`;
 			})
 			.join("");
 
 		this.$table.html(`
-			<table class="table table-bordered table-sm" style="white-space: nowrap;">
+			<table class="ad-table ad-table-fixed">
 				<thead><tr>${header}</tr></thead>
 				<tbody>${body || `<tr><td colspan="${colspan}" class="text-muted text-center">${__("No records")}</td></tr>`}</tbody>
 			</table>
@@ -293,20 +394,20 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 	}
 
 	wire_table_events() {
-		this.$table.off("click", ".drill-toggle").on("click", ".drill-toggle", (event) => {
+		this.$table.off("click", ".ad-drill-toggle").on("click", ".ad-drill-toggle", (event) => {
 			const $row = $(event.currentTarget).closest("tr");
 			this.toggle_detail($row.data("employee"), $row);
 		});
 
-		this.$table.off("click", ".create-adjustment-btn").on("click", ".create-adjustment-btn", (event) => {
+		this.$table.off("click", ".ad-create-adjustment-btn").on("click", ".ad-create-adjustment-btn", (event) => {
 			const $row = $(event.currentTarget).closest("tr");
 			this.create_adjustment($row.data("employee"));
 		});
 	}
 
 	toggle_detail(employee, $summary_row) {
-		const $detail_row = $summary_row.next(".detail-row");
-		const $toggle = $summary_row.find(".drill-toggle");
+		const $detail_row = $summary_row.next(".ad-detail-row");
+		const $toggle = $summary_row.find(".ad-drill-toggle");
 
 		if ($detail_row.is(":visible")) {
 			$detail_row.hide();
@@ -333,20 +434,14 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 	}
 
 	render_detail($detail_row, day_rows) {
-		const $container = $detail_row.find(".detail-container");
+		const $container = $detail_row.find(".ad-detail-container");
 
 		if (!day_rows.length) {
 			$container.html(`<span class="text-muted">${__("No days in range.")}</span>`);
 			return;
 		}
 
-		const flag_labels = {
-			missed: __("Missed"),
-			no_out: __("No Out"),
-			no_in: __("No In"),
-			late_in: __("Late In"),
-			early_out: __("Early Out"),
-		};
+		const flag_labels = AD_METRIC_LABELS;
 
 		const rows_html = day_rows
 			.map((day) => {
@@ -370,7 +465,7 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 						<td>${frappe.utils.escape_html(day.day || "")}</td>
 						<td>${day.in_time ? frappe.datetime.get_time(day.in_time) : ""}</td>
 						<td>${day.out_time ? frappe.datetime.get_time(day.out_time) : ""}</td>
-						<td>${(day.hours_worked || 0).toFixed(2)}</td>
+						<td title="${__("Sum of every clock-in/out pair this day, not simply Out minus In - a day with more than one session (e.g. a lunch break) has gaps in between that aren't worked time.")}">${(day.hours_worked || 0).toFixed(2)}</td>
 						<td>${flags}${holiday}${on_leave}${half_day_leave}</td>
 					</tr>
 				`;
@@ -378,14 +473,14 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 			.join("");
 
 		$container.html(`
-			<table class="table table-bordered table-sm" style="margin: 0;">
+			<table class="ad-detail-table">
 				<thead>
 					<tr>
 						<th>${__("Date")}</th>
 						<th>${__("Day")}</th>
 						<th>${__("In")}</th>
 						<th>${__("Out")}</th>
-						<th title="${__("Sum of every clock-in/out pair this day, not simply Out minus In - a day with more than one session (e.g. a lunch break) has gaps in between that aren't worked time.")}">${__("Hours Worked")}</th>
+						<th>${__("Hours Worked")}</th>
 						<th>${__("Flags")}</th>
 					</tr>
 				</thead>
@@ -410,3 +505,160 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 		});
 	}
 };
+
+function ad_render_donut(selector, labels, values, colors, total) {
+	const $container = $(selector);
+	if (!total) {
+		$container.html(`<div class="ad-chart-empty">${__("No data yet")}</div>`);
+		return;
+	}
+
+	new frappe.Chart(selector, {
+		type: "donut",
+		height: 200,
+		data: { labels: labels, datasets: [{ values: values }] },
+		colors: colors,
+		maxSlices: labels.length,
+		tooltipOptions: {
+			formatTooltipY: (value) => `${value} (${Math.round((value / total) * 100)}%)`,
+		},
+	});
+}
+
+function ad_ensure_style() {
+	if (document.getElementById("ad-style")) return;
+
+	const style = document.createElement("style");
+	style.id = "ad-style";
+	style.textContent = `
+		.ad-page { padding-bottom: 20px; }
+
+		.ad-stats-row {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+			gap: 12px;
+			margin: 15px 0 20px;
+		}
+		.ad-stat-card {
+			background: var(--card-bg, #fff);
+			border: 1px solid var(--border-color, #d1d8dd);
+			border-radius: 8px;
+			padding: 16px;
+			text-align: center;
+			border-top: 3px solid var(--border-color, #d1d8dd);
+		}
+		.ad-stat-card.ad-tone-good { border-top-color: #22c55e; }
+		.ad-stat-card.ad-tone-bad { border-top-color: #ef4444; }
+		.ad-stat-value { font-size: 26px; font-weight: 700; line-height: 1.2; }
+		.ad-tone-good .ad-stat-value { color: #16a34a; }
+		.ad-tone-bad .ad-stat-value { color: #dc2626; }
+		.ad-stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+		.ad-stat-sub { font-size: 11px; color: var(--text-light, #aaa); margin-top: 2px; }
+
+		.ad-charts-row {
+			display: grid;
+			grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+			gap: 12px;
+			margin-bottom: 30px;
+		}
+		.ad-chart-card {
+			background: var(--card-bg, #fff);
+			border: 1px solid var(--border-color, #d1d8dd);
+			border-radius: 8px;
+			padding: 12px 16px;
+		}
+		.ad-chart-title { font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+		.ad-chart-empty {
+			height: 200px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			color: var(--text-muted);
+			font-size: 12px;
+		}
+
+		.ad-section {
+			background: var(--card-bg, #fff);
+			border: 1px solid var(--border-color, #d1d8dd);
+			border-radius: 8px;
+			margin-bottom: 20px;
+			overflow: hidden;
+		}
+		.ad-section-header { padding: 14px 18px 10px; border-bottom: 1px solid var(--border-color, #d1d8dd); }
+		.ad-section-header h4 { margin: 0 0 4px; }
+		.ad-section-header p { margin: 0; font-size: 12px; }
+
+		.ad-table-wrap { overflow-x: auto; width: 100%; max-width: 100%; min-width: 0; }
+		.ad-empty { padding: 24px 18px; color: var(--text-muted); font-size: 13px; }
+
+		/* table-layout: fixed - see the Clocking Import Issues page's own
+		   CSS comment for why this matters: without it, a single long
+		   unbroken value (a long Employee Name/Branch) can force the whole
+		   table wider than its container, escaping .ad-table-wrap's own
+		   overflow-x and pushing a horizontal scroll onto the page itself
+		   rather than staying contained. */
+		.ad-table { width: 100%; max-width: 100%; border-collapse: collapse; font-size: 13px; }
+		.ad-table-fixed { table-layout: fixed; }
+		.ad-table th {
+			text-align: left;
+			font-weight: 600;
+			font-size: 11px;
+			text-transform: uppercase;
+			letter-spacing: 0.03em;
+			color: var(--text-muted);
+			padding: 10px 14px;
+			border-bottom: 1px solid var(--border-color, #d1d8dd);
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
+		}
+		.ad-table td {
+			padding: 8px 14px;
+			border-bottom: 1px solid var(--border-color, #eef1f2);
+			vertical-align: middle;
+			overflow-wrap: break-word;
+		}
+		.ad-table tbody tr.ad-summary-row:hover { background: var(--control-bg, #f4f5f6); }
+		.ad-table tbody tr.ad-row-issue { background: rgba(239, 68, 68, 0.04); }
+		.ad-drill-toggle { cursor: pointer; width: 24px; }
+		.ad-col-narrow { width: 76px; }
+		.ad-col-code { width: 130px; }
+		.ad-col-action { width: 190px; }
+		.ad-col-truncate {
+			max-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.ad-badge {
+			display: inline-block;
+			min-width: 22px;
+			text-align: center;
+			background: #fee2e2;
+			color: #b91c1c;
+			border-radius: 10px;
+			padding: 1px 8px;
+			font-size: 12px;
+			font-weight: 600;
+		}
+
+		.ad-detail-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0; }
+		.ad-detail-table th {
+			text-align: left;
+			font-weight: 600;
+			font-size: 11px;
+			text-transform: uppercase;
+			letter-spacing: 0.03em;
+			color: var(--text-muted);
+			padding: 8px 12px;
+			border-bottom: 1px solid var(--border-color, #d1d8dd);
+		}
+		.ad-detail-table td {
+			padding: 6px 12px;
+			border-bottom: 1px solid var(--border-color, #eef1f2);
+		}
+		.ad-detail-table tbody tr:last-child td { border-bottom: none; }
+	`;
+	document.head.appendChild(style);
+}
