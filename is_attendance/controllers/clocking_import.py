@@ -580,8 +580,14 @@ def run_import_job(doctype: str, docname: str) -> None:
 	# work starts.
 	try:
 		rows = doc.parse_file()
-		created, skipped, skipped_unresolved = create_checkins(doc, rows)
+		# Must run before create_checkins(): Employee Checkin.isa_clocking_machine
+		# is a Link to IS Attendance Clocking Machine, validated on insert -
+		# a row naming a genuinely new device would fail that validation
+		# (LinkValidationError: "Could not find IS Attendance Clocking
+		# Machine: ...") if its master record doesn't exist yet, and this
+		# is the call that creates it.
 		new_machines = sync_clocking_machines(rows, doc.doctype, doc.name)
+		created, skipped, skipped_unresolved = create_checkins(doc, rows)
 
 		# queue_import()'s own refresh_readiness() call, just before this job
 		# was enqueued, already computed doc.issues/employees_without_branch
