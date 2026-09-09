@@ -160,6 +160,20 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 	end_time = _parse_time(filters.get("end_time")) or DEFAULT_END_TIME
 	threshold_minutes = cint(filters.get("threshold"))
 
+	# Weekends have never been flag-exempt by default (a Saturday/Sunday
+	# with zero clocking counts as Missed for every employee - deliberate,
+	# see module docstring), so this defaults off when absent, same as any
+	# other unset Check filter. Public holidays are the opposite: they've
+	# always been unconditionally flag-exempt (also documented above) -
+	# defaulting this on when the filter key is missing entirely (not just
+	# falsy) keeps every existing caller that doesn't know about this new
+	# filter (a saved/scheduled report run, a direct API call) behaving
+	# exactly as before; only an explicit uncheck turns that exemption off.
+	exclude_weekends = bool(cint(filters.get("exclude_weekends")))
+	exclude_public_holidays = (
+		True if filters.get("exclude_public_holidays") is None else bool(cint(filters.get("exclude_public_holidays")))
+	)
+
 	employees = _resolve_employees(filters)
 	if not employees:
 		return [], {}
@@ -193,8 +207,18 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 
 			classification = _classify_day(day_checkins, start_time, end_time, threshold_minutes)
 
-			if holiday_name or is_full_day_leave:
-				# Public holiday or a full leave day - fully exempt.
+			is_excluded_weekend = exclude_weekends and day_type in ("Saturday", "Sunday")
+			is_excluded_holiday = bool(holiday_name) and exclude_public_holidays
+
+			if is_excluded_holiday or is_full_day_leave or is_excluded_weekend:
+				# Public holiday (only while "Exclude Public Holidays" is on
+				# - see above), a full leave day (always exempt), or a
+				# weekend (only while "Exclude Weekends" is on) - fully
+				# exempt from the 5 flags. Doesn't touch
+				# total_weekdays/total_saturdays/total_sundays above - those
+				# stay a pure calendar-day tally regardless of either toggle
+				# (confirmed with the user - "exclude from calculations"
+				# means the 5 compliance flags, not the day-count columns).
 				flags = {"missed": False, "no_out": False, "no_in": False, "late_in": False, "early_out": False}
 			else:
 				flags = {key: classification[key] for key in ("missed", "no_out", "no_in", "late_in", "early_out")}
@@ -368,6 +392,11 @@ def _resolve_employees(filters: dict) -> list[str]:
 
 	if filters.get("department"):
 		query_filters["department"] = filters["department"]
+
+	if filters.get("occupational_level"):
+		# za_local's own Employment Equity Act field (Employee.za_occupational_level) -
+		# reused directly rather than introducing a second classification.
+		query_filters["za_occupational_level"] = filters["occupational_level"]
 
 	if filters.get("payroll_cost_center"):
 		query_filters["payroll_cost_center"] = filters["payroll_cost_center"]

@@ -37,10 +37,33 @@ frappe.query_reports["Attendance Compliance Summary"] = {
 			options: "Cost Center",
 		},
 		{
+			// Employee.za_occupational_level (za_local's own Employment
+			// Equity Act field) - same options list, reused directly rather
+			// than a second classification.
+			fieldname: "occupational_level",
+			label: __("Occupational Level"),
+			fieldtype: "Select",
+			options: "\nTop Management\nSenior Management\nProfessionally Qualified\nSkilled Technical\nSemi-Skilled\nUnskilled\nTemporary Employees\nNon-Permanent",
+		},
+		{
 			fieldname: "include_inactive",
 			label: __("Include Inactive Employees"),
 			fieldtype: "Check",
 			default: 0,
+		},
+		{
+			fieldname: "exclude_weekends",
+			label: __("Exclude Weekends from Calculations"),
+			fieldtype: "Check",
+			default: 0,
+			description: __("Saturdays/Sundays still show and still count toward the Total Saturdays/Sundays columns - they just never trigger Missed/No Out/No In/Late In/Early Out."),
+		},
+		{
+			fieldname: "exclude_public_holidays",
+			label: __("Exclude Public Holidays from Calculations"),
+			fieldtype: "Check",
+			default: 1,
+			description: __("On by default (matches this report's long-standing behaviour) - a public holiday still shows and still counts toward its Total Weekdays/Saturdays/Sundays column, it just never triggers Missed/No Out/No In/Late In/Early Out. Uncheck to treat a public holiday as a normal day for those flags."),
 		},
 		{
 			fieldname: "from_date",

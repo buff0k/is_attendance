@@ -11,8 +11,23 @@ The export has two kinds of sheet:
 
 - **One sheet per employee**: a day-by-day breakdown (Date, Day, Day Type,
   In, Out, Hours Worked, Public Holiday, On Leave, and the same
-  Missed/No Out/No In/Late In/Early Out flags, per day) - computed once
-  from attendance_compliance_summary.compute().
+  Missed/No Out/No In/Late In/Early Out flags, per day) - the raw
+  Date/In/Out values come from attendance_compliance_summary.compute(),
+  but everything derivable purely from what's on the sheet is a **live
+  Excel formula**, not a Python-computed value - Day/Day Type read off
+  that row's own Date cell (=TEXT(...,"dddd") / WEEKDAY-based CHOOSE), and
+  Hours Worked reads off that row's own In/Out cells ((Out-In)*24 - see
+  _write_daily_sheet). Date is a real native Excel date value and In/Out
+  are real native Excel TIME values (never a datetime merely formatted to
+  look like one) - none of these three are text or Python-computed, so
+  editing a Date, In, or Out cell by hand ripples through correctly.
+  Deliberately separate from - and allowed to disagree with -
+  attendance_compliance_summary.compute()'s own Python-computed
+  hours_worked (which sums every clock-in/out pair that day, used for
+  Missed/Late In/Early Out and the on-screen Dashboard): that's report
+  logic answering "was this day compliant," this sheet's Hours Worked
+  column is spreadsheet logic answering "what does Out minus In say,"
+  and the two only have to agree on a day with a single session.
 - **Report**: a compact per-employee summary, grouped by Weekday/Saturday/
   Sunday under merged group headers rather than one flat 22-column table.
   Its metric cells are **live Excel formulas** (COUNTIF/COUNTIFS) reading
@@ -122,8 +137,20 @@ def get_daily_detail(filters=None, employee=None):
 
 TIME_FIELDS = {"in_time", "out_time"}
 DATE_FIELDS = {"date"}
-DATE_NUMBER_FORMAT = "yyyy-mm-dd"
-TIME_NUMBER_FORMAT = "hh:mm"
+# Which category Excel's own Format Cells dialog shows (Date/Time vs
+# Custom) is decided by matching the cell's literal format code string
+# against Excel's own canonical list for the viewer's locale - "mm-dd-yy"
+# (openpyxl's builtin id 14 string) matched and shows as a real Date cell,
+# confirmed on a real export. For Time, id 20's string ("h:mm", no
+# seconds) did not match, and neither did a plain "hh:mm" guess - the
+# format this site's own Excel actually applies when you pick "Time" >
+# 24-hour from Format Cells includes seconds ("13:30:55"), which is
+# exactly openpyxl's OTHER genuine Time builtin, id 21 ("h:mm:ss") - the
+# one 24-hour Time builtin with seconds; only id 20 (no seconds) was tried
+# before. Showing seconds is a closer match to the underlying data anyway
+# - the raw device checkin timestamps this comes from are second-precise.
+DATE_NUMBER_FORMAT = "mm-dd-yy"
+TIME_NUMBER_FORMAT = "h:mm:ss"
 
 
 def _build_workbook(summary_rows: list[dict], daily_detail: dict[str, list[dict]]):
@@ -181,10 +208,52 @@ def _write_daily_sheet(sheet, title: str, day_rows: list[dict]):
 		cell.border = border
 	sheet.row_dimensions[2].height = 26
 
+	date_col = _daily_column_letter("date")
+	in_col = _daily_column_letter("in_time")
+	out_col = _daily_column_letter("out_time")
+
 	for row_offset, row in enumerate(day_rows):
 		row_index = DAILY_SHEET_DATA_START_ROW + row_offset
+		date_ref = f"{date_col}{row_index}"
+		in_ref = f"{in_col}{row_index}"
+		out_ref = f"{out_col}{row_index}"
+
 		for col_index, (fieldname, _label) in enumerate(DAILY_SHEET_COLUMNS, start=1):
-			cell = sheet.cell(row=row_index, column=col_index, value=_excel_value(row.get(fieldname)))
+			if fieldname == "day":
+				# Live formula off the Date cell, not a precomputed string -
+				# stays correct if someone edits a row's own Date by hand,
+				# same "never quietly drift from the sheet's own data" reason
+				# the Report sheet's metric cells are formulas (see module
+				# docstring).
+				value = f'=TEXT({date_ref},"dddd")'
+			elif fieldname == "day_type":
+				# WEEKDAY(date, 2) returns 1=Monday...7=Sunday - CHOOSE maps
+				# that straight onto the same Weekday/Saturday/Sunday
+				# classification _day_type() uses server-side, purely from
+				# the Date cell, so it can never disagree with it.
+				value = f'=CHOOSE(WEEKDAY({date_ref},2),"Weekday","Weekday","Weekday","Weekday","Weekday","Saturday","Sunday")'
+			elif fieldname in TIME_FIELDS:
+				# Pure time-of-day (no date component at all) - a real Excel
+				# TIME value, not a full datetime formatted to merely look
+				# like one, so the Hours Worked formula below (and anything
+				# else referencing these cells) is doing genuine time
+				# arithmetic on them.
+				stamp = row.get(fieldname)
+				value = stamp.time() if stamp else None
+			elif fieldname == "hours_worked":
+				# A real Excel formula off this row's own In/Out cells - the
+				# report's own Python-computed hours_worked (which sums
+				# every clock-in/out pair that day, not just the first and
+				# last) is what drives Missed/Late In/Early Out and the
+				# on-screen Dashboard; this column is a separate, simpler,
+				# self-contained spreadsheet figure computed purely from
+				# what's shown here, same as anyone doing =Out-In by hand
+				# would get.
+				value = f"=IF(AND({in_ref}<>\"\",{out_ref}<>\"\"),({out_ref}-{in_ref})*24,0)"
+			else:
+				value = _excel_value(row.get(fieldname))
+
+			cell = sheet.cell(row=row_index, column=col_index, value=value)
 			cell.border = border
 			if fieldname in DATE_FIELDS:
 				cell.number_format = DATE_NUMBER_FORMAT
