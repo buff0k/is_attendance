@@ -27,11 +27,18 @@ needs both days refreshed. Same reasoning as clocking_import.py's bulk paths.
 
 Leave awareness: get_leave_info() surfaces every Leave Application already
 on file for the period (rendered as a badge per day on the roster - see
-clocking_adjustment.js), and create_leave_for_date() lets a day that turns
-out to actually be leave, not a missed clocking, get a proper (Draft)
-Leave Application created right from this same review - so someone
-reviewing a gap doesn't have to switch screens, or worse, "fix" a day that
-was never actually missing in the first place.
+clocking_adjustment.js). A day that turns out to actually be leave, not a
+missed clocking, is handled by routing to a real, prefilled New Leave
+Application form (clocking_adjustment.js's cadj_open_leave_dialog) rather
+than inserting one headlessly here - Leave Application carries mandatory
+fields with no derivable value (e.g. ir app's payroll-hours custom fields,
+which are plain manual-entry Floats with no fetch_from/client
+script/server hook anywhere) alongside ones that genuinely are auto-filled
+by client-side scripts (leave_approver, from the employee's own record or
+their Department's configured approver) that only run through the normal
+"new doc" flow. A server-side .insert() here would have to keep
+reverse-engineering both categories - and everything any other installed
+app adds to Leave Application in future - so it doesn't try.
 """
 
 from __future__ import annotations
@@ -45,6 +52,9 @@ from frappe.utils import add_days, cint, get_datetime, getdate
 
 from is_attendance.controllers.attendance_sync import (
 	recompute_attendance_for_employee_day,
+)
+from is_attendance.isambane_attendance.report.attendance_compliance_summary.attendance_compliance_summary import (
+	get_sa_public_holidays,
 )
 
 
@@ -96,6 +106,29 @@ class ClockingAdjustment(Document):
 					"remove": 0,
 				},
 			)
+
+	@frappe.whitelist()
+	def get_checkins_in_range(self, from_date, to_date) -> list[dict]:
+		"""Read-only sibling of load_checkins() above - every Employee
+		Checkin for this document's own employee within [from_date,
+		to_date], returned without touching self or checkin_rows at all.
+		Lets the client (clocking_adjustment.js's
+		cadj_fetch_and_merge_new_days) fetch just the newly-added slice of
+		a widened period and merge it in, instead of load_checkins()'s own
+		wipe-and-rebuild-the-whole-table behaviour discarding whatever the
+		user already corrected for dates still in range."""
+		if not self.employee:
+			frappe.throw(_("Set Employee first."))
+
+		start = get_datetime(f"{from_date} 00:00:00")
+		end = get_datetime(f"{to_date} 23:59:59")
+
+		return frappe.get_all(
+			"Employee Checkin",
+			filters={"employee": self.employee, "time": ["between", [start, end]]},
+			fields=["name", "time", "log_type"],
+			order_by="time asc",
+		)
 
 	@frappe.whitelist()
 	def get_leave_info(self) -> dict:
@@ -150,37 +183,33 @@ class ClockingAdjustment(Document):
 		return info
 
 	@frappe.whitelist()
-	def create_leave_for_date(self, date, leave_type, half_day=0):
-		"""Creates (but does not submit) a Leave Application for a single
-		date, for this Clocking Adjustment's own employee - lets a day that
-		turns out to actually be leave (not a missed clocking) get its proper
-		record created right from this same review, without switching
-		screens. Left as a Draft deliberately: approval stays HR's own normal
-		Leave Application workflow, this doesn't grant it - it only creates
-		the record so it exists to be approved."""
-		if self.docstatus != 0:
-			frappe.throw(_("Leave can only be created from a Draft Clocking Adjustment."))
-		if not self.employee:
-			frappe.throw(_("Set Employee first."))
+	def get_day_info(self) -> dict:
+		"""Day-of-week label and SA public holiday name (if any) for every
+		date in [from_date, to_date], keyed by date string - lets the roster
+		show the same day-of-week/public-holiday context the Attendance
+		Dashboard already shows (attendance_compliance_summary.py's own
+		_day_type classification and get_sa_public_holidays lookup), reusing
+		that report's holiday lookup directly rather than a second
+		implementation that could drift from it. Independent of
+		get_leave_info() above: this covers every date in range regardless
+		of leave, that one only dates with a Leave Application on file."""
+		if not self.from_date or not self.to_date:
+			return {}
 
-		half_day = cint(half_day)
-		leave_application = frappe.get_doc(
-			{
-				"doctype": "Leave Application",
-				"employee": self.employee,
-				"leave_type": leave_type,
-				"from_date": date,
-				"to_date": date,
-				"half_day": half_day,
-				"half_day_date": date if half_day else None,
-				"company": self.company,
-				"description": _("Created from Clocking Adjustment {0}{1}").format(
-					self.name or _("(unsaved)"), f": {self.reason}" if self.reason else ""
-				),
+		holidays = get_sa_public_holidays(self.from_date, self.to_date)
+
+		info: dict[str, dict] = {}
+		current = getdate(self.from_date)
+		end = getdate(self.to_date)
+		while current <= end:
+			weekday = current.weekday()  # Monday=0 ... Sunday=6
+			info[str(current)] = {
+				"day_type": "Sunday" if weekday == 6 else "Saturday" if weekday == 5 else "Weekday",
+				"public_holiday": holidays.get(current) or "",
 			}
-		)
-		leave_application.insert(ignore_permissions=True)
-		return leave_application.name
+			current = add_days(current, 1)
+
+		return info
 
 	def on_submit(self):
 		affected: set[tuple[str, object]] = set()
