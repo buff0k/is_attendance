@@ -10,11 +10,15 @@
  * Layout, top to bottom: a stat-card summary row, three donut charts
  * (frappe.Chart - Frappe's own built-in charting library, already loaded
  * desk-wide, no extra bundling needed), then the two actionable tables -
- * on separate tabs (standard Bootstrap nav-tabs, already wired up
- * desk-wide via data-toggle="tab", no extra JS needed) rather than
- * stacked on top of each other, since the Employee Codes table can run
- * to hundreds of rows and burying the much shorter Machines table below
- * all of that made it awkward to reach.
+ * on separate tabs rather than stacked on top of each other, since the
+ * Employee Codes table can run to hundreds of rows and burying the much
+ * shorter Machines table below all of that made it awkward to reach. The
+ * markup uses standard Bootstrap nav-tabs classes/attributes for styling
+ * and accessibility, but Desk does NOT actually wire up Bootstrap's own
+ * automatic data-toggle="tab" plugin (confirmed against frappe/form/tab.js
+ * - even Frappe's own internal Form Tabs manually wires a click handler
+ * rather than relying on it) - wire_tabs() below does the same, switching
+ * the active nav-link and tab-pane by hand on click.
  *
  * Each table row carries an inline Link control
  * (frappe.ui.form.make_control). The Employee Codes table supports
@@ -86,6 +90,12 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 								</div>
 								<button class="btn btn-sm btn-primary cii-resolve-selected-btn">${__("Resolve Selected")}</button>
 							</div>
+							<div class="cii-codes-search-row">
+								<input type="text" class="form-control input-sm cii-code-search" placeholder="${__(
+									"Search Employee Code..."
+								)}">
+								<span class="text-muted cii-codes-search-count"></span>
+							</div>
 							<div class="cii-codes-table cii-table-wrap"></div>
 						</div>
 					</div>
@@ -109,9 +119,57 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 		this.$machines_count = this.$body.find(".cii-machines-count");
 		this.$codes_table = this.$body.find(".cii-codes-table");
 		this.$machines_table = this.$body.find(".cii-machines-table");
+		this.$codes_search = this.$body.find(".cii-code-search");
+		this.$codes_search_count = this.$body.find(".cii-codes-search-count");
 
 		this.employee_controls = [];
 		this.$body.find(".cii-resolve-selected-btn").on("click", () => this.resolve_selected());
+		// Static markup, not re-rendered by render_codes() (which would wipe
+		// the typed value and this listener) - wired once here, applied
+		// again at the end of every render_codes() so an active search term
+		// survives a refresh (e.g. right after resolving a batch).
+		this.$codes_search.on("input", () => this.filter_codes_table());
+		this.wire_tabs();
+	}
+
+	filter_codes_table() {
+		const term = (this.$codes_search.val() || "").trim().toLowerCase();
+		const $rows = this.$codes_table.find("tbody tr");
+		let shown = 0;
+
+		$rows.each((_, el) => {
+			const $row = $(el);
+			// .attr(), not .data() - jQuery's .data() auto-converts a
+			// numeric-looking attribute value (most real employee codes
+			// have no leading zero, e.g. "2003") into an actual JS number,
+			// and .toLowerCase() on a number throws - silently killing this
+			// whole .each() on the very first such row, which is exactly
+			// why typing here did nothing at all.
+			const code = $row.attr("data-employee-code") || "";
+			const match = !term || code.toLowerCase().includes(term);
+			$row.toggle(match);
+			if (match) shown += 1;
+		});
+
+		this.$codes_search_count.text(term ? __("{0} of {1} shown", [shown, $rows.length]) : "");
+	}
+
+	wire_tabs() {
+		// Desk doesn't actually activate Bootstrap's own automatic
+		// data-toggle="tab" plugin (see the module comment up top) - switch
+		// the active nav-link and tab-pane by hand instead.
+		this.$body.find(".cii-tabs .nav-link").on("click", (event) => {
+			event.preventDefault();
+			const $link = $(event.currentTarget);
+			if ($link.hasClass("active")) return;
+
+			this.$body.find(".cii-tabs .nav-link").removeClass("active");
+			$link.addClass("active");
+
+			const target = $link.attr("href");
+			this.$body.find(".tab-content > .tab-pane").removeClass("active");
+			this.$body.find(target).addClass("active");
+		});
 	}
 
 	resolve_selected() {
@@ -133,16 +191,23 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 				const result = r.message || {};
 				const resolved = result.resolved || [];
 				const failed = result.failed || [];
-				const resynced = result.resynced_documents || [];
 
+				// The Employee.attendance_device_id writes above are
+				// already done by the time this callback runs, but
+				// resyncing every affected Draft document (a full re-save
+				// each - see resolve_employee_codes_bulk's own docstring)
+				// is queued as a background job, not done inline - so
+				// those documents won't reflect the resolution
+				// immediately. The run() below still shows accurate
+				// current state; it just may not have caught up yet for a
+				// few seconds on a large batch.
 				frappe.show_alert({
 					message: failed.length
-						? __("Resolved {0} code(s) ({1} document(s) updated) - {2} failed.", [
+						? __("Resolved {0} code(s) - {1} failed. Affected documents are resyncing in the background.", [
 								resolved.length,
-								resynced.length,
 								failed.length,
 						  ])
-						: __("Resolved {0} code(s) - {1} document(s) updated.", [resolved.length, resynced.length]),
+						: __("Resolved {0} code(s) - affected documents are resyncing in the background.", [resolved.length]),
 					indicator: failed.length ? "orange" : "green",
 				});
 
@@ -263,6 +328,7 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 
 		if (!rows.length) {
 			this.$codes_table.html(`<div class="cii-empty">${__("No unresolved employee codes - every Draft Clocking Import fully resolves.")}</div>`);
+			this.$codes_search_count.text("");
 			return;
 		}
 
@@ -286,7 +352,7 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 
 		rows.forEach((row) => {
 			const $tr = $(`
-				<tr>
+				<tr data-employee-code="${frappe.utils.escape_html(row.employee_code)}">
 					<td><span class="cii-code-pill">${frappe.utils.escape_html(row.employee_code)}</span></td>
 					<td><span class="cii-badge">${row.occurrence_count}</span></td>
 					<td>${row.document_count}</td>
@@ -324,6 +390,10 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 			// Employee set, whenever it's clicked (see resolve_selected()).
 			this.employee_controls.push({ employee_code: row.employee_code, control: employee_control });
 		});
+
+		// Re-applies whatever search term is already in the box (e.g. still
+		// there from before a refresh) to the freshly-rendered rows.
+		this.filter_codes_table();
 	}
 
 	render_machines(rows) {
@@ -473,6 +543,12 @@ function cii_ensure_style() {
 			border-bottom-color: var(--border-color, #d1d8dd);
 			margin-bottom: 0;
 		}
+		/* Explicit rather than relying on Bootstrap's own .tab-pane CSS
+		   being present in Desk's bundle as-is - wire_tabs() switches which
+		   pane has .active by hand (see its own comment), this is what
+		   actually shows/hides them. */
+		.cii-page .tab-pane { display: none; }
+		.cii-page .tab-pane.active { display: block; }
 		.cii-tabs .nav-link {
 			color: var(--text-muted);
 			border: none;
@@ -522,6 +598,16 @@ function cii_ensure_style() {
 		.cii-section-header-with-action .cii-resolve-selected-btn { flex-shrink: 0; }
 		.cii-section-header h4 { margin: 0 0 4px; }
 		.cii-section-header p { margin: 0; font-size: 12px; }
+
+		.cii-codes-search-row {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			padding: 10px 18px;
+			border-bottom: 1px solid var(--border-color, #d1d8dd);
+		}
+		.cii-code-search { max-width: 260px; }
+		.cii-codes-search-count { font-size: 12px; white-space: nowrap; }
 
 		.cii-table-wrap { overflow-x: auto; width: 100%; max-width: 100%; min-width: 0; }
 		.cii-empty { padding: 24px 18px; color: var(--text-muted); font-size: 13px; }

@@ -68,6 +68,7 @@ from is_attendance.controllers.attendance_sync import (
 IMPORT_JOB_TIMEOUT = 60 * 60  # a large file needs far longer than a web request allows
 RUN_IMPORT_JOB_PATH = "is_attendance.controllers.clocking_import.run_import_job"
 QUEUE_IMPORT_BY_NAME_PATH = "is_attendance.controllers.clocking_import.queue_import_by_name"
+RESYNC_DRAFTS_JOB_PATH = "is_attendance.controllers.clocking_import.resync_drafts_for_codes_job"
 
 _ATTLOG_SUFFIX = re.compile(r"_?attlog$", re.IGNORECASE)
 _KNOWN_EXTENSION = re.compile(r"\.(dat|csv|txt)$", re.IGNORECASE)
@@ -90,14 +91,14 @@ def machine_id_from_filename(filename: str | None) -> str | None:
 	return stem or None
 
 # Every doctype that uses this shared module, and its own Issues child
-# doctype - used by resync_other_drafts() to find every OTHER Draft import
+# doctype - used by resync_drafts_for_codes() to find every Draft import
 # document that's still showing a given employee code as unresolved. Now
 # just the one doctype since Clocking DAT Import/Clocking CSV Import were
 # consolidated into a single format-sniffing "Clocking Import" (see
 # is_attendance.controllers.clocking_parsers) - kept as a dict, not a bare
 # constant, so a genuinely different future import pipeline (not just a new
 # clocking-export shape, which only needs a new parser) can still register
-# itself here without changing resync_other_drafts() itself.
+# itself here without changing resync_drafts_for_codes() itself.
 IMPORT_ISSUE_DOCTYPES = {
 	"Clocking Import": "Clocking Import Issue",
 }
@@ -284,10 +285,11 @@ def apply_resolved_issues(doc) -> set[str]:
 	assign_employee_code above).
 
 	Returns the set of employee codes this call just resolved for the
-	first time - used by refresh_readiness() to propagate the fix to every
-	other Draft import document still showing the same code as unresolved
-	(see resync_other_drafts()), so a mapping only ever needs to be typed
-	in once, not once per document that happened to hit it."""
+	first time - used by refresh_readiness() to (eventually - see
+	after_save_hook()) propagate the fix to every other Draft import
+	document still showing the same code as unresolved, so a mapping only
+	ever needs to be typed in once, not once per document that happened
+	to hit it."""
 	newly_resolved: set[str] = set()
 
 	for row in doc.issues or []:
@@ -311,11 +313,13 @@ def resync_drafts_for_codes(codes: set[str], skip: tuple[str, str] | None = None
 	turn schedules its own auto-queue via after_save_hook() below) -
 	without a human needing to open and re-save that document by hand.
 
-	Shared by resync_other_drafts() (called from a document's own save,
-	so it passes `skip` to avoid resaving itself) and the central Clocking
-	Import Issues page's own resolve action (no "self" document, so
-	`skip` is left unset). Returns the names of every document actually
-	resaved, for the caller to report back."""
+	Shared, via resync_drafts_for_codes_job() below, by after_save_hook()
+	(a document's own save resolved a code - passes `skip` to avoid
+	redundantly resyncing itself, since its own validate() already
+	reflects the resolution) and the central Clocking Import Issues
+	page's own bulk resolve action (no single "self" document, so `skip`
+	is left unset). Returns the names of every document actually resaved,
+	for the caller to report back."""
 	if not codes:
 		return []
 
@@ -342,19 +346,39 @@ def resync_drafts_for_codes(codes: set[str], skip: tuple[str, str] | None = None
 	return resynced
 
 
-def resync_other_drafts(doc, newly_resolved_codes: set[str]) -> None:
-	"""After this document's own save just resolved one or more employee
-	codes globally (apply_resolved_issues), propagate that to every OTHER
-	Draft import document still stuck on one of those codes (see
-	resync_drafts_for_codes above) - this document's own `doc`/`name` is
-	excluded, since it already just handled itself.
+def resync_drafts_for_codes_job(
+	codes: list[str], skip_doctype: str | None = None, skip_docname: str | None = None
+) -> None:
+	"""Background worker entry point for resync_drafts_for_codes() above -
+	queued (queue="long", same IMPORT_JOB_TIMEOUT run_import_job() itself
+	uses) rather than called directly from a web request. Resyncing means
+	a full re-save of every affected Draft document - a complete
+	doc.parse_file() + refresh_readiness() each, the exact same real cost
+	run_import_job() already exists to move off the web request for a
+	single document.
 
-	Safe against runaway recursion: a resynced document's own issues rows
-	never have `employee` pre-filled (only a human editing Issues in Desk,
-	or the central Clocking Import Issues page, sets that), so its own
-	apply_resolved_issues() always returns an empty set, and
-	resync_drafts_for_codes immediately no-ops for it."""
-	resync_drafts_for_codes(newly_resolved_codes, skip=(doc.doctype, doc.name))
+	Two callers, both of which resolve one or more employee codes and
+	then need every OTHER Draft document stuck on them to catch up:
+
+	- The central Clocking Import Issues page's own bulk resolve action
+	  (resolve_employee_codes_bulk() in clocking_import_issues.py) - no
+	  single document "started" this, so skip_doctype/skip_docname are
+	  left unset.
+	- after_save_hook() below, after a single document's own Issues grid
+	  resolved one or more codes as part of a normal save - that document
+	  already reflects the resolution (its own validate() already ran),
+	  so skip_doctype/skip_docname exclude it from being redundantly
+	  resynced a second time here.
+
+	Either way, doing this resaving synchronously - inside the
+	whitelisted bulk-resolve call, or inside the triggering document's
+	own save request - is exactly what was timing out (120s web request
+	vs a single large document's own resync already measured at ~48s on
+	this bench, before even accounting for any OTHER documents fanning
+	out from the same codes)."""
+	skip = (skip_doctype, skip_docname) if skip_doctype and skip_docname else None
+	resync_drafts_for_codes(set(codes), skip=skip)
+	frappe.db.commit()
 
 
 def rebuild_issues(doc, rows: list[dict]) -> None:
@@ -393,20 +417,31 @@ def refresh_readiness(doc, rows: list[dict]) -> bool:
 	means exactly the same thing in both places, for every doctype that
 	uses this module.
 
-	Also propagates a newly-resolved employee code to every other Draft
-	import document still stuck on it (resync_other_drafts), and flags a
-	background import pass to be queued automatically once the save
-	commits (see after_save_hook() below) whenever this save left *more*
-	rows resolvable than before - not only once every row resolves.
-	Resolving a mapping is the only manual step that should ever be
-	required, whether that fix finishes the file outright or only chips
-	away at it; a partial fix deserves the same "just happens" treatment
-	the fully-resolved case already gets, not a second "Start Import"
-	click nobody's told to expect. Also covers the very first validate()
-	on a freshly-attached file (resolvable_count starts at 0), so a file
-	with some immediately-resolvable rows starts importing on its own,
-	which is what unattended callers like erp_uploader.py already assume
-	happens.
+	Also flags a newly-resolved employee code to be propagated to every
+	other Draft import document still stuck on it, and a background
+	import pass to be queued automatically, both once the save actually
+	commits (see after_save_hook() below) - the propagation whenever this
+	save resolved a code for the first time, the import pass whenever
+	this save left *more* rows resolvable than before, not only once
+	every row resolves. Resolving a mapping is the only manual step that
+	should ever be required, whether that fix finishes the file outright
+	or only chips away at it; a partial fix deserves the same "just
+	happens" treatment the fully-resolved case already gets, not a second
+	"Start Import" click nobody's told to expect. Also covers the very
+	first validate() on a freshly-attached file (resolvable_count starts
+	at 0), so a file with some immediately-resolvable rows starts
+	importing on its own, which is what unattended callers like
+	erp_uploader.py already assume happens.
+
+	Both are deferred to after_save_hook() rather than acted on directly
+	here - propagating to other documents in particular means a full
+	re-save of each one (see resync_drafts_for_codes), which risks
+	exceeding the web request's own timeout exactly the way the same work
+	already did for the central Clocking Import Issues page's own bulk
+	resolve action before that was backgrounded too (confirmed on this
+	bench: a single large document's own resync alone measures ~48s,
+	against a 120s web request timeout - before any other documents
+	fanning out from the same codes are even counted).
 
 	Also computes resolvable_count (see resolvable_row_count()) - distinct
 	from `ready`, which still means "100% resolved" and drives Pending
@@ -417,7 +452,15 @@ def refresh_readiness(doc, rows: list[dict]) -> bool:
 
 	newly_resolved = apply_resolved_issues(doc)
 	rebuild_issues(doc, rows)
-	resync_other_drafts(doc, newly_resolved)
+
+	# Accumulates rather than overwrites - queue_import() calls
+	# refresh_readiness() directly, then triggers its own doc.save()
+	# shortly after, which calls it again via validate_import(). That
+	# second call's own apply_resolved_issues() finds nothing left to
+	# resolve (the first call already did the actual write) and returns
+	# an empty set - which must not wipe out what the first call found.
+	if newly_resolved:
+		doc.flags._codes_to_resync = (doc.flags.get("_codes_to_resync") or set()) | newly_resolved
 
 	missing_branch = sorted(employees_without_branch(rows, doc.branch))
 
@@ -434,7 +477,7 @@ def refresh_readiness(doc, rows: list[dict]) -> bool:
 	# changed nothing) and every partial improvement in between, without
 	# re-triggering a save that didn't actually change what can import
 	# (e.g. an unrelated field edit, or two documents racing to resolve
-	# the same code via resync_other_drafts).
+	# the same code via the resync job above).
 	if doc.resolvable_count > previous_resolvable_count:
 		doc.flags._auto_queue_after_save = True
 
@@ -545,33 +588,59 @@ def after_save_hook(doc) -> None:
 	"""Shared on_update() body. Callers: def on_update(self):
 	clocking_import.after_save_hook(self)
 
-	If this save is the one that just made the document ready to import
-	(refresh_readiness() flips on doc.flags._auto_queue_after_save when
-	that happens - see its docstring), queue the import automatically
-	rather than requiring a human to click "Start Import" or wait for an
-	external poller like erp_uploader.py to notice. Resolving the mapping
-	*is* the human action the original design asked for ("wait for user
-	mapping... before importing"); nothing further should be required once
-	that's done - independent of which doctype this is, and independent of
-	whether any external uploader happens to be running.
+	Two independent, unrelated things this save may have flagged
+	(refresh_readiness() sets either, both, or neither) - both deferred to
+	background jobs rather than acted on directly here, since either
+	could mean a reentrant/slow operation on this same still-in-flight
+	on_update():
 
-	Deferred to a background job rather than calling queue_import()
-	directly here: queue_import() does its own doc.save(), which would be
-	a reentrant save on this same document if called from inside its own
-	still-in-flight on_update()."""
-	if not doc.flags.get("_auto_queue_after_save"):
-		return
+	- _auto_queue_after_save: this save is the one that just made the
+	  document ready to import (or newly resolvable). Queues the import
+	  automatically rather than requiring a human to click "Start Import"
+	  or wait for an external poller like erp_uploader.py to notice.
+	  Resolving the mapping *is* the human action the original design
+	  asked for; nothing further should be required once that's done.
+	  Deferred because queue_import() does its own doc.save(), which
+	  would be reentrant if called directly from inside this still
+	  in-flight on_update().
 
-	doc.flags._auto_queue_after_save = False
+	- _codes_to_resync: this save resolved one or more employee codes for
+	  the first time (via this document's own Issues grid) - every OTHER
+	  Draft document still stuck on one of them needs to catch up
+	  (resync_drafts_for_codes_job), the same propagation the central
+	  Clocking Import Issues page's own bulk resolve action already
+	  triggers directly. Deferred for the same reason
+	  resolve_employee_codes_bulk() itself no longer does this inline:
+	  resyncing means a full re-save of every affected document, which
+	  can easily exceed this web request's own (120s) timeout - the
+	  reentrant-save problem above ends up moot once it's backgrounded
+	  anyway, but the timeout risk is the real reason either way."""
+	if doc.flags.get("_auto_queue_after_save"):
+		doc.flags._auto_queue_after_save = False
 
-	frappe.enqueue(
-		QUEUE_IMPORT_BY_NAME_PATH,
-		queue="short",
-		job_name=f"is_attendance_auto_queue_import_{doc.doctype}_{doc.name}",
-		doctype=doc.doctype,
-		docname=doc.name,
-		enqueue_after_commit=True,
-	)
+		frappe.enqueue(
+			QUEUE_IMPORT_BY_NAME_PATH,
+			queue="short",
+			job_name=f"is_attendance_auto_queue_import_{doc.doctype}_{doc.name}",
+			doctype=doc.doctype,
+			docname=doc.name,
+			enqueue_after_commit=True,
+		)
+
+	codes_to_resync = doc.flags.get("_codes_to_resync")
+	if codes_to_resync:
+		doc.flags._codes_to_resync = None
+
+		frappe.enqueue(
+			RESYNC_DRAFTS_JOB_PATH,
+			queue="long",
+			timeout=IMPORT_JOB_TIMEOUT,
+			job_name=f"is_attendance_resync_drafts_{doc.doctype}_{doc.name}_{frappe.generate_hash(length=8)}",
+			codes=sorted(codes_to_resync),
+			skip_doctype=doc.doctype,
+			skip_docname=doc.name,
+			enqueue_after_commit=True,
+		)
 
 
 def queue_import_by_name(doctype: str, docname: str) -> None:
@@ -624,8 +693,8 @@ def run_import_job(doctype: str, docname: str) -> None:
 		# was enqueued, already computed doc.issues/employees_without_branch
 		# for the current file - create_checkins() doesn't resolve employee
 		# codes or change that, so it's still accurate to check here rather
-		# than recomputing (which would also needlessly re-run
-		# resync_other_drafts()).
+		# than recomputing (which would also needlessly re-trigger another
+		# resync pass via after_save_hook()).
 		fully_done = not doc.issues and not doc.employees_without_branch
 
 		log_lines = [
