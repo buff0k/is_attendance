@@ -4,7 +4,7 @@
  "docstatus": 0,
  "doctype": "Page",
  "idx": 0,
- "modified": "2026-09-09 12:00:00.000000",
+ "modified": "2026-09-09 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "clocking-import-issues",
@@ -18,7 +18,7 @@
    "role": "HR Manager"
   },
   {
-   "role": "HR User"
+   "role": "IR Manager"
   }
  ],
  "script": null,
