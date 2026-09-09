@@ -61,9 +61,10 @@
  * above actually resolves it.
  */
 
-const CADJ_ROW_LABEL_WIDTH = 100; // px - keeps every row's track and the ruler header the same width
+const CADJ_ROW_LABEL_WIDTH = 120; // px - keeps every row's track and the ruler header the same width; wide enough for the weekday + public holiday badge alongside the date
 const CADJ_STAGGER_THRESHOLD_MINUTES = 40; // pills this close in time get nudged apart vertically - wider pills need more room than the old dots did
 const CADJ_CLICK_VS_DRAG_PX = 4; // pointerup within this many px of pointerdown counts as a click, not a drag
+const CADJ_WEEKDAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]; // Date#getDay() order - not translated, same treatment as the ruler's own "24:00" labels
 
 frappe.ui.form.on("Clocking Adjustment", {
 	refresh(frm) {
@@ -114,22 +115,22 @@ frappe.ui.form.on("Clocking Adjustment", {
 		// appear, then re-renders again once it resolves to fill in the
 		// leave blocks.
 		cadj_render_timeline(frm);
-		cadj_maybe_reload_leave_info(frm).then(() => cadj_render_timeline(frm));
+		cadj_maybe_reload_context(frm).then(() => cadj_render_timeline(frm));
 	},
 
 	employee(frm) {
-		cadj_maybe_auto_load(frm);
-		cadj_maybe_reload_leave_info(frm).then(() => cadj_render_timeline(frm));
+		cadj_on_period_field_change(frm, "employee");
+		cadj_maybe_reload_context(frm).then(() => cadj_render_timeline(frm));
 	},
 
 	from_date(frm) {
-		cadj_maybe_auto_load(frm);
-		cadj_maybe_reload_leave_info(frm).then(() => cadj_render_timeline(frm));
+		cadj_on_period_field_change(frm, "from_date");
+		cadj_maybe_reload_context(frm).then(() => cadj_render_timeline(frm));
 	},
 
 	to_date(frm) {
-		cadj_maybe_auto_load(frm);
-		cadj_maybe_reload_leave_info(frm).then(() => cadj_render_timeline(frm));
+		cadj_on_period_field_change(frm, "to_date");
+		cadj_maybe_reload_context(frm).then(() => cadj_render_timeline(frm));
 	},
 });
 
@@ -158,6 +159,35 @@ function cadj_maybe_reload_leave_info(frm) {
 	});
 }
 
+// Day-of-week label + SA public holiday name, independent of employee (a
+// holiday isn't employee-specific) so it's only refetched when the date
+// range itself changes - keyed and cached the same "don't refetch if
+// nothing that matters changed" way as leave info above.
+function cadj_maybe_reload_day_info(frm) {
+	if (!(frm.doc.from_date && frm.doc.to_date)) {
+		frm.__cadj_day_info = {};
+		frm.__cadj_day_info_key = null;
+		return Promise.resolve();
+	}
+
+	const key = `${frm.doc.from_date}|${frm.doc.to_date}`;
+	if (frm.__cadj_day_info_key === key) {
+		return Promise.resolve();
+	}
+
+	return frm.call("get_day_info").then((r) => {
+		frm.__cadj_day_info = r.message || {};
+		frm.__cadj_day_info_key = key;
+	});
+}
+
+// Both context fetches share the exact same set of trigger points (refresh,
+// employee/from_date/to_date change, a fresh Load Checkins) - combined here
+// so every call site fires both instead of only remembering leave info.
+function cadj_maybe_reload_context(frm) {
+	return Promise.all([cadj_maybe_reload_leave_info(frm), cadj_maybe_reload_day_info(frm)]);
+}
+
 function cadj_open_leave_dialog(frm, day_key) {
 	frappe.prompt(
 		[
@@ -176,20 +206,24 @@ function cadj_open_leave_dialog(frm, day_key) {
 			},
 		],
 		(values) => {
-			frm.call("create_leave_for_date", {
-				date: day_key,
+			// Route to a real, prefilled New Leave Application form rather than
+			// inserting one headlessly from here - Leave Application carries
+			// mandatory fields with no derivable value (e.g. ir app's
+			// payroll-hours custom fields - plain manual-entry Floats, no
+			// fetch_from/client script/server hook sets them anywhere) plus
+			// ones genuinely auto-filled by the form's own client-side scripts
+			// (leave_approver) that only run through this normal "new doc"
+			// flow. Whoever's reviewing this gap fills in and submits the
+			// leave form itself, same as they would from anywhere else in HR.
+			frappe.new_doc("Leave Application", {
+				employee: frm.doc.employee,
 				leave_type: values.leave_type,
+				from_date: day_key,
+				to_date: day_key,
 				half_day: values.half_day,
-			}).then((r) => {
-				const leave_name = r.message;
-				frm.__cadj_leave_info_key = null; // force a refetch so the new block shows
-				cadj_maybe_reload_leave_info(frm).then(() => cadj_render_timeline(frm));
-				frappe.show_alert({
-					message: __('Leave Application <a href="/app/leave-application/{0}" target="_blank">{0}</a> created (still Draft - submit it through the normal Leave approval flow).', [
-						leave_name,
-					]),
-					indicator: "green",
-				});
+				half_day_date: values.half_day ? day_key : undefined,
+				company: frm.doc.company,
+				description: __("Created from Clocking Adjustment {0}", [frm.doc.name || __("(unsaved)")]),
 			});
 		},
 		__("Create Leave Application for {0}", [frappe.datetime.str_to_user(day_key, false, true)]),
@@ -317,12 +351,117 @@ function cadj_toggle_table(frm) {
 }
 
 function cadj_maybe_auto_load(frm) {
+	// Silent, and only from refresh (see frappe.ui.form.on below) - refresh
+	// fires on every re-render, including after every save, so this stays
+	// a no-op whenever rows already exist rather than nagging with a
+	// confirm dialog on every save. cadj_on_period_field_change below is
+	// the one bound to an actual user edit of Employee/From Date/To Date,
+	// and is the one that offers to reload already-loaded rows.
 	if (frm.doc.docstatus !== 0) return;
 	if (frm._cadj_loading) return;
 	if (!(frm.doc.employee && frm.doc.from_date && frm.doc.to_date)) return;
-	if (frm.doc.checkin_rows && frm.doc.checkin_rows.length) return; // never silently overwrite existing rows
+	if (frm.doc.checkin_rows && frm.doc.checkin_rows.length) return;
 
 	cadj_load_and_render(frm, false);
+}
+
+function cadj_on_period_field_change(frm, changed_field) {
+	// Bound to employee/from_date/to_date's own change events - not just
+	// whichever field happens to complete the trio, so a field that was
+	// already complete but changes again later (correcting the Employee,
+	// widening To Date after an initial load) is still noticed, not only
+	// the one-time transition from incomplete to complete that
+	// cadj_maybe_auto_load's own silent refresh-time path covers. Each
+	// call re-checks all three fields itself as the actual safeguard
+	// against acting on a still-incomplete period, regardless of which of
+	// the three just changed or what order they were filled in.
+	if (frm.doc.docstatus !== 0) return;
+	if (frm._cadj_loading) return;
+	if (!(frm.doc.employee && frm.doc.from_date && frm.doc.to_date)) return;
+
+	if (!(frm.doc.checkin_rows && frm.doc.checkin_rows.length)) {
+		cadj_load_and_render(frm, false);
+		return;
+	}
+
+	if (changed_field === "employee") {
+		// A genuinely different person's data - can't merge two employees'
+		// checkins into one table, so this still asks before wiping, same
+		// as the manual "Load Checkins for Period" button.
+		frappe.confirm(
+			__(
+				"Employee changed - reload checkins for {0}? This replaces the pins below, discarding any unsaved edits.",
+				[frm.doc.employee]
+			),
+			() => cadj_load_and_render(frm, true)
+		);
+		return;
+	}
+
+	// From Date/To Date changed with rows already on screen - fetch and
+	// merge in just the newly-covered date(s) rather than wiping
+	// everything, so widening the period auto-populates the new days'
+	// checkins without discarding corrections already made to days still
+	// in range.
+	cadj_fetch_and_merge_new_days(frm);
+}
+
+function cadj_fetch_and_merge_new_days(frm) {
+	// "Newly covered" = any date in the current [from_date, to_date] that
+	// doesn't already have at least one row (new or existing, active or
+	// removed) in checkin_rows - cheap to compute client-side, and correct
+	// regardless of whether the range grew, shrank, or shifted. A date
+	// that's already represented (including one genuinely empty on the
+	// server - a prior load already established that) is left alone; the
+	// fetch below re-querying it again if it happens to fall inside the
+	// same request is harmless, since merging dedupes by checkin name the
+	// same way create_checkins() itself does server-side.
+	const covered = new Set(Object.keys(cadj_rows_by_day(frm)));
+	const missing_days = cadj_date_range(frm.doc.from_date, frm.doc.to_date).filter(
+		(day) => !covered.has(cadj_date_key(day))
+	);
+
+	if (!missing_days.length) {
+		cadj_render_timeline(frm);
+		return;
+	}
+
+	const range_from = cadj_date_key(missing_days[0]);
+	const range_to = cadj_date_key(missing_days[missing_days.length - 1]);
+
+	frm
+		.call("get_checkins_in_range", { from_date: range_from, to_date: range_to })
+		.then((r) => {
+			const existing_checkin_names = new Set((frm.doc.checkin_rows || []).map((row) => row.checkin).filter(Boolean));
+			let added = 0;
+
+			(r.message || []).forEach((checkin) => {
+				if (existing_checkin_names.has(checkin.name)) return;
+				frm.add_child("checkin_rows", {
+					checkin: checkin.name,
+					original_time: checkin.time,
+					original_log_type: checkin.log_type,
+					time: checkin.time,
+					log_type: checkin.log_type,
+					remove: 0,
+				});
+				added += 1;
+			});
+
+			if (added) {
+				frm.refresh_field("checkin_rows");
+				frm.dirty();
+				cadj_realternate_all_days(frm);
+			}
+			cadj_render_timeline(frm);
+
+			if (added) {
+				frappe.show_alert({
+					message: __("Loaded {0} checkin(s) for the newly added date(s).", [added]),
+					indicator: "green",
+				});
+			}
+		});
 }
 
 function cadj_load_and_render(frm, notify) {
@@ -334,7 +473,7 @@ function cadj_load_and_render(frm, notify) {
 			frm.dirty();
 			cadj_realternate_all_days(frm);
 			cadj_render_timeline(frm);
-			cadj_maybe_reload_leave_info(frm).then(() => cadj_render_timeline(frm));
+			cadj_maybe_reload_context(frm).then(() => cadj_render_timeline(frm));
 			if (notify) {
 				frappe.show_alert({
 					message: __("Checkins loaded for the period."),
@@ -497,14 +636,65 @@ function cadj_classify_day(day_rows, leave_here) {
 	return { tint: "ok", ends_unpaired: false };
 }
 
-function cadj_compute_intervals(active_sorted_rows) {
+function cadj_compute_global_intervals(frm) {
+	// Pairs by each row's actual log_type, across the WHOLE loaded period -
+	// not scoped per calendar day, for the same reason cadj_realternate_all_days
+	// itself is global (see that function's comment). A day-scoped version
+	// of this pairing (the previous implementation) meant an overnight
+	// interval never got ANY green shading on EITHER of its two days - the
+	// IN sits on day 1's own row, the OUT on day 2's, so neither day's own
+	// row-local row set ever contains both ends of that one pair. That's
+	// exactly what made bars "disappear" whenever Batch Add's overnight
+	// option filled several consecutive days at once - every night's worth
+	// of shading was silently dropped. This computes real (start, end)
+	// Date pairs once for the whole period; cadj_intervals_for_day below
+	// clips each one to whatever portion actually falls within one row, so
+	// an overnight shift now shows real shading right up to both rows' own
+	// midnight edge instead of nothing at all.
+	const active = (frm.doc.checkin_rows || [])
+		.filter((row) => !row.remove && row.time)
+		.slice()
+		.sort((a, b) => cadj_parse_datetime(a.time) - cadj_parse_datetime(b.time));
+
 	const intervals = [];
-	for (let i = 0; i + 1 < active_sorted_rows.length; i += 2) {
-		const start = cadj_minutes_of_day(cadj_parse_datetime(active_sorted_rows[i].time));
-		const end = cadj_minutes_of_day(cadj_parse_datetime(active_sorted_rows[i + 1].time));
-		if (end > start) intervals.push({ start, end });
+	let open_in = null;
+
+	for (const row of active) {
+		if (row.log_type === "IN") {
+			open_in = row;
+		} else if (row.log_type === "OUT" && open_in) {
+			const start = cadj_parse_datetime(open_in.time);
+			const end = cadj_parse_datetime(row.time);
+			if (end > start) intervals.push({ start, end });
+			open_in = null;
+		}
 	}
+
 	return intervals;
+}
+
+function cadj_intervals_for_day(global_intervals, day) {
+	// Clips each global interval to the portion that falls within this
+	// row's own 00:00-24:00 track, in minutes-of-that-day - an interval
+	// starting before this day is clipped to start at 0, one ending after
+	// this day is clipped to end at 1440 (never 0, since day_end - day_start
+	// is exactly 1440 minutes), so a shift that's still open at midnight
+	// paints solid green right up to the row's own right edge.
+	const day_start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0);
+	const day_end = new Date(day_start.getFullYear(), day_start.getMonth(), day_start.getDate() + 1, 0, 0, 0);
+
+	const clipped = [];
+	for (const interval of global_intervals) {
+		if (interval.end <= day_start || interval.start >= day_end) continue;
+		const clip_start = interval.start < day_start ? day_start : interval.start;
+		const clip_end = interval.end > day_end ? day_end : interval.end;
+		if (clip_end <= clip_start) continue;
+		clipped.push({
+			start: (clip_start - day_start) / 60000,
+			end: (clip_end - day_start) / 60000,
+		});
+	}
+	return clipped;
 }
 
 // ------------------------------------------------------------------
@@ -561,6 +751,20 @@ function cadj_ensure_style() {
 			text-decoration: underline;
 		}
 		.cadj-roster-row:hover .cadj-leave-action { display: inline-block; }
+		.cadj-holiday-badge {
+			margin-top: 2px;
+			font-size: 9px;
+			font-weight: 600;
+			color: #2563eb;
+			background: #eaf1ff;
+			border: 1px solid #c8dcff;
+			border-radius: 8px;
+			padding: 1px 6px;
+			max-width: ${CADJ_ROW_LABEL_WIDTH}px;
+			overflow: hidden;
+			white-space: nowrap;
+			text-overflow: ellipsis;
+		}
 		.cadj-ruler-row { display: flex; align-items: center; margin-bottom: 6px; }
 		.cadj-ruler-spacer { flex: 0 0 ${CADJ_ROW_LABEL_WIDTH}px; width: ${CADJ_ROW_LABEL_WIDTH}px; }
 		.cadj-ruler-track {
@@ -748,6 +952,8 @@ function cadj_render_timeline(frm) {
 
 	const by_day = cadj_rows_by_day(frm);
 	const leave_info = frm.__cadj_leave_info || {};
+	const day_info = frm.__cadj_day_info || {};
+	const global_intervals = cadj_compute_global_intervals(frm);
 	let previous_ended_unpaired = false;
 
 	cadj_date_range(frm.doc.from_date, frm.doc.to_date).forEach((day) => {
@@ -760,9 +966,25 @@ function cadj_render_timeline(frm) {
 
 		const $row = $(`<div class="cadj-roster-row cadj-row-${classification.tint}"></div>`).appendTo($roster);
 		const $label = $(`<div class="cadj-row-label"></div>`).appendTo($row);
+		const weekday_abbr = CADJ_WEEKDAY_ABBR[day.getDay()];
 		$label.append(
-			`<div><span class="cadj-row-status-dot cadj-row-${classification.tint}"></span>${frappe.datetime.str_to_user(key, false, true)}</div>`
+			`<div><span class="cadj-row-status-dot cadj-row-${classification.tint}"></span>${weekday_abbr} ${frappe.datetime.str_to_user(key, false, true)}</div>`
 		);
+
+		const day_here = day_info[key];
+		if (day_here && day_here.public_holiday) {
+			// Same holiday name shown as the Attendance Dashboard's own
+			// per-day drilldown (get_sa_public_holidays via get_day_info() -
+			// see clocking_adjustment.py) - deliberately not folded into
+			// classification's tint: a public holiday with zero clocking
+			// still reads as Missing/Incomplete here, same as the Dashboard
+			// itself treats an unworked weekend day, this is only a label.
+			$label.append(
+				`<div class="cadj-holiday-badge" title="${frappe.utils.escape_html(day_here.public_holiday)}">${frappe.utils.escape_html(
+					day_here.public_holiday
+				)}</div>`
+			);
+		}
 
 		if (!readonly) {
 			const $leave_action = $(
@@ -830,7 +1052,7 @@ function cadj_render_timeline(frm) {
 			$track.append(`<span class="cadj-empty-hint">${hint}</span>`);
 		}
 
-		cadj_compute_intervals(active).forEach((interval) => {
+		cadj_intervals_for_day(global_intervals, day).forEach((interval) => {
 			const left_pct = (interval.start / 1440) * 100;
 			const width_pct = ((interval.end - interval.start) / 1440) * 100;
 			$track.append(`<div class="cadj-interval" style="left:${left_pct}%; width:${width_pct}%;"></div>`);
