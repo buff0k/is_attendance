@@ -33,6 +33,18 @@
   {
    "child": 0,
    "collapsible": 1,
+   "icon": "activity",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Clocking Import Overview",
+   "link_to": "clocking-import-issues",
+   "link_type": "Page",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
    "icon": "import",
    "indent": 0,
    "keep_closed": 0,
@@ -67,7 +79,7 @@
    "type": "Link"
   }
  ],
- "modified": "2026-09-07 10:30:37.114646",
+ "modified": "2026-09-09 15:37:38.781979",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Attendance",

@@ -20,7 +20,12 @@ data isn't quite right yet" gaps that used to only be visible one document
   the same mechanism. Employee pickers can be set on as many rows as
   needed before resolving anything - resolve_employee_codes_bulk() then
   assigns every pair that has one set in a single action, rather than one
-  round trip per code.
+  round trip per code. The actual Employee.attendance_device_id writes
+  happen inline (fast), but resyncing every Draft document affected is
+  queued as a background job (resync_drafts_for_codes_job) rather than
+  done inline - resyncing means a full re-save of each one, and a bulk
+  resolve touching several large documents at once was timing out the
+  request when that ran synchronously.
 - **Incomplete Clocking Machines**: every IS Attendance Clocking Machine
   record with no Branch set - the one piece of missing device
   information with a real functional consequence (see
@@ -36,9 +41,10 @@ from frappe import _
 from frappe.utils.messages import clear_last_message
 
 from is_attendance.controllers.clocking_import import (
+	IMPORT_JOB_TIMEOUT,
 	IMPORT_ISSUE_DOCTYPES,
+	RESYNC_DRAFTS_JOB_PATH,
 	assign_employee_code,
-	resync_drafts_for_codes,
 )
 
 PAGE_ROLES = {"System Manager", "HR Manager", "IR Manager"}
@@ -156,10 +162,18 @@ def resolve_employee_codes_bulk(mappings) -> dict:
 	action is that one bad row shouldn't undo everything else that was
 	genuinely fine.
 
-	Only ONE resync_drafts_for_codes() call, across every code this batch
-	actually resolved for the first time - not one per pair - so a
-	document stuck on more than one of these codes only gets resaved
-	once, not repeatedly.
+	Resyncing (resync_drafts_for_codes) is NOT done here inline - it's
+	queued as a background job (resync_drafts_for_codes_job, queue="long",
+	same IMPORT_JOB_TIMEOUT run_import_job() itself uses). Resyncing means
+	a full re-save (a complete re-parse of the attached file) of every
+	Draft document stuck on any of the codes this batch just resolved -
+	the same real cost run_import_job() already exists to move off the
+	web request for a single document, except a bulk resolve can easily
+	touch several large documents at once, which is exactly what was
+	timing out this call when it ran synchronously. Only ONE job is
+	queued, covering every code this batch resolved together - not one
+	job per code - so a document stuck on more than one of them only gets
+	resaved once, not repeatedly.
 
 	`mappings` is a list of {"employee_code": ..., "employee": ...} dicts
 	(frappe.call sends it JSON-encoded, hence the isinstance check)."""
@@ -191,9 +205,17 @@ def resolve_employee_codes_bulk(mappings) -> dict:
 		if changed:
 			newly_resolved_codes.add(employee_code)
 
-	resynced = resync_drafts_for_codes(newly_resolved_codes)
+	if newly_resolved_codes:
+		frappe.enqueue(
+			RESYNC_DRAFTS_JOB_PATH,
+			queue="long",
+			timeout=IMPORT_JOB_TIMEOUT,
+			job_name=f"is_attendance_resync_drafts_{frappe.generate_hash(length=8)}",
+			codes=sorted(newly_resolved_codes),
+			enqueue_after_commit=True,
+		)
 
-	return {"resolved": resolved, "failed": failed, "resynced_documents": resynced}
+	return {"resolved": resolved, "failed": failed, "resync_queued": bool(newly_resolved_codes)}
 
 
 @frappe.whitelist()
