@@ -6,8 +6,6 @@
  "field_order": [
   "branch_access_tab",
   "hr_per_branch",
-  "clocking_machines_tab",
-  "clocking_machines",
   "sage_payroll_tab",
   "leave_type_mapping"
  ],
@@ -23,18 +21,6 @@
    "fieldtype": "Table",
    "label": "Responsible HR per Branch",
    "options": "IS Attendance User Branch"
-  },
-  {
-   "fieldname": "clocking_machines_tab",
-   "fieldtype": "Tab Break",
-   "label": "Clocking Machines"
-  },
-  {
-   "description": "Maps a physical clocking device/terminal ID (as it appears in legacy .DAT rows and in Employee Checkin.device_id from HIKVision) to the Branch it belongs to - used as a last-resort Branch source when a checkin's employee has no Branch of their own and the import it came from has no Fallback Branch set (see is_attendance.controllers.clocking_import's create_checkins). New rows are added here automatically (Branch left blank) whenever a Clocking * Import job completes and encounters a device not already listed - just fill in its Branch, or leave it blank to keep relying on Employee/Fallback Branch for that device.",
-   "fieldname": "clocking_machines",
-   "fieldtype": "Table",
-   "label": "Clocking Machines",
-   "options": "IS Attendance Clocking Machine"
   },
   {
    "fieldname": "sage_payroll_tab",
@@ -53,7 +39,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-07 09:00:00.000000",
+ "modified": "2026-09-09 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "IS Attendance Settings",

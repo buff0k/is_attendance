@@ -69,8 +69,6 @@ IMPORT_JOB_TIMEOUT = 60 * 60  # a large file needs far longer than a web request
 RUN_IMPORT_JOB_PATH = "is_attendance.controllers.clocking_import.run_import_job"
 QUEUE_IMPORT_BY_NAME_PATH = "is_attendance.controllers.clocking_import.queue_import_by_name"
 
-SETTINGS_DOCTYPE = "IS Attendance Settings"
-
 _ATTLOG_SUFFIX = re.compile(r"_?attlog$", re.IGNORECASE)
 _KNOWN_EXTENSION = re.compile(r"\.(dat|csv|txt)$", re.IGNORECASE)
 
@@ -134,50 +132,45 @@ def employee_branch_map(rows: list[dict]) -> dict[str, str | None]:
 
 
 def clocking_machine_branch_map() -> dict[str, str]:
-	"""machine_id -> Branch, from IS Attendance Settings.clocking_machines -
-	rows with no Branch set yet are excluded (nothing to fall back to).
-	Last-resort Branch source for create_checkins()/employees_without_branch(),
-	behind both the employee's own Employee.branch and the import's own
-	Fallback Branch (see those functions) - a device only ever fills a gap
-	neither of those covers."""
-	rows = frappe.get_all(
-		"IS Attendance Clocking Machine",
-		filters={"parenttype": SETTINGS_DOCTYPE, "parent": SETTINGS_DOCTYPE, "parentfield": "clocking_machines"},
-		fields=["machine_id", "branch"],
-	)
-	return {row.machine_id: row.branch for row in rows if row.branch}
+	"""machine_id -> Branch, from every IS Attendance Clocking Machine
+	record that has one set - a device with no Branch yet is excluded
+	(nothing to fall back to). Last-resort Branch source for
+	create_checkins()/employees_without_branch(), behind both the
+	employee's own Employee.branch and the import's own Fallback Branch
+	(see those functions) - a device only ever fills a gap neither of
+	those covers. Reads the master doctype directly (autoname is
+	field:machine_id, so a record's own name IS the machine_id) rather
+	than through IS Attendance Settings' own Clocking Machines registry -
+	that registry is a Table MultiSelect of links now, purely for
+	visibility/management from Settings; it isn't where the actual
+	Branch/etc. data lives any more."""
+	rows = frappe.get_all("IS Attendance Clocking Machine", filters={"branch": ["is", "set"]}, fields=["name", "branch"])
+	return {row.name: row.branch for row in rows}
 
 
 def sync_clocking_machines(rows: list[dict], source_doctype: str | None = None, source_docname: str | None = None) -> list[str]:
-	"""Adds a new row (Branch left blank) to IS Attendance Settings.clocking_machines
-	for every machine_id in `rows` that isn't already listed there - so a
-	person only ever has to set the Branch on a device, never type its ID in
-	by hand first. Called once per completed import job (see
-	run_import_job), not per row - new devices are rare, no reason to check
-	on every checkin. Returns the newly-added machine_ids, purely for
-	logging (see run_import_job's import_log)."""
+	"""Creates a new IS Attendance Clocking Machine record (Branch left
+	blank) for every machine_id in `rows` that doesn't already have one -
+	so a person only ever has to open the device's own record and set its
+	Branch, never type its ID in by hand first. The device's own list view
+	is the place to see/manage every known machine (IS Attendance Settings
+	no longer keeps a separate registry of them - dropped once it became
+	pure duplication of this doctype's own list). Called once per
+	completed import job (see run_import_job), not per row - new devices
+	are rare, no reason to check on every checkin. Returns the newly-added
+	machine_ids, purely for logging (see run_import_job's import_log)."""
 	seen_machine_ids = {row.get("machine_id") for row in rows if row.get("machine_id")}
 	if not seen_machine_ids:
 		return []
 
 	existing_machine_ids = set(
-		frappe.get_all(
-			"IS Attendance Clocking Machine",
-			filters={"parenttype": SETTINGS_DOCTYPE, "parent": SETTINGS_DOCTYPE, "parentfield": "clocking_machines"},
-			pluck="machine_id",
-		)
+		frappe.get_all("IS Attendance Clocking Machine", filters={"name": ["in", list(seen_machine_ids)]}, pluck="name")
 	)
 	new_machine_ids = sorted(seen_machine_ids - existing_machine_ids)
 	if not new_machine_ids:
 		return []
 
-	settings = frappe.get_doc(SETTINGS_DOCTYPE)
-	# Re-check against the freshly-loaded doc too, in case another import
-	# job's own sync_clocking_machines() call added the same device between
-	# the query above and this load (two files from different new machines
-	# landing and importing around the same time).
-	already_on_doc = {row.machine_id for row in settings.clocking_machines or []}
-	description = (
+	location_notes = (
 		f"Auto-detected from {source_doctype} {source_docname}"
 		if source_doctype and source_docname
 		else "Auto-detected from an import"
@@ -185,13 +178,17 @@ def sync_clocking_machines(rows: list[dict], source_doctype: str | None = None, 
 
 	added = []
 	for machine_id in new_machine_ids:
-		if machine_id in already_on_doc:
+		try:
+			frappe.get_doc(
+				{"doctype": "IS Attendance Clocking Machine", "machine_id": machine_id, "location_notes": location_notes}
+			).insert(ignore_permissions=True)
+		except frappe.DuplicateEntryError:
+			# Another import job's own sync_clocking_machines() call created
+			# this same new device between the existence check above and
+			# this insert (two files from different new machines landing
+			# and importing around the same time) - already handled.
 			continue
-		settings.append("clocking_machines", {"machine_id": machine_id, "description": description})
 		added.append(machine_id)
-
-	if added:
-		settings.save(ignore_permissions=True)
 
 	return added
 
@@ -199,10 +196,10 @@ def sync_clocking_machines(rows: list[dict], source_doctype: str | None = None, 
 def employees_without_branch(rows: list[dict], fallback_branch: str | None) -> set[str]:
 	"""Employees with at least one checkin in this file that can't get a
 	Branch at all - no Branch on their own Employee record, no Fallback
-	Branch set on this import, and (per-row) no Branch mapped for that
-	row's own machine_id in IS Attendance Settings.clocking_machines
-	either. Empty whenever a Fallback Branch is set, since that alone is
-	then enough for every row regardless of employee or machine."""
+	Branch set on this import, and (per-row) no Branch set on that row's
+	own IS Attendance Clocking Machine record either. Empty whenever a
+	Fallback Branch is set, since that alone is then enough for every row
+	regardless of employee or machine."""
 	if fallback_branch:
 		return set()
 
@@ -692,10 +689,10 @@ def create_checkins(doc, rows: list[dict]) -> tuple[int, int, int]:
 
 	Branch priority per row: the employee's own Employee.branch, then this
 	import's Fallback Branch, then - only if neither of those gives one -
-	IS Attendance Settings.clocking_machines' mapping for that row's own
-	machine_id (see clocking_machine_branch_map()). A device's mapping is
-	always the last resort, never an override of the employee's own Branch
-	or an explicitly-set Fallback Branch.
+	that row's own IS Attendance Clocking Machine record's Branch (see
+	clocking_machine_branch_map()). A device's Branch is always the last
+	resort, never an override of the employee's own Branch or an
+	explicitly-set Fallback Branch.
 
 	Rows whose employee code doesn't resolve at all, or resolves but has
 	no Branch from any of the three sources, are counted

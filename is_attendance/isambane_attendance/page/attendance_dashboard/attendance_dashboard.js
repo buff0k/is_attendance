@@ -75,11 +75,39 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 			change: () => this.run(),
 		});
 
+		this.filters.occupational_level = this.page.add_field({
+			// Employee.za_occupational_level (za_local's own Employment
+			// Equity Act field) - same options list, reused directly.
+			fieldname: "occupational_level",
+			label: __("Occupational Level"),
+			fieldtype: "Select",
+			options: "\nTop Management\nSenior Management\nProfessionally Qualified\nSkilled Technical\nSemi-Skilled\nUnskilled\nTemporary Employees\nNon-Permanent",
+			change: () => this.run(),
+		});
+
 		this.filters.include_inactive = this.page.add_field({
 			fieldname: "include_inactive",
 			label: __("Include Inactive Employees"),
 			fieldtype: "Check",
 			default: 0,
+			change: () => this.run(),
+		});
+
+		this.filters.exclude_weekends = this.page.add_field({
+			fieldname: "exclude_weekends",
+			label: __("Exclude Weekends from Calculations"),
+			fieldtype: "Check",
+			default: 0,
+			description: __("Saturdays/Sundays still show, they just never trigger Missed/No Out/No In/Late In/Early Out."),
+			change: () => this.run(),
+		});
+
+		this.filters.exclude_public_holidays = this.page.add_field({
+			fieldname: "exclude_public_holidays",
+			label: __("Exclude Public Holidays from Calculations"),
+			fieldtype: "Check",
+			default: 1,
+			description: __("On by default - a public holiday still shows, it just never triggers Missed/No Out/No In/Late In/Early Out. Uncheck to treat it as a normal day for those flags."),
 			change: () => this.run(),
 		});
 
@@ -340,8 +368,8 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 					<tr>
 						<td>${day.date ? frappe.datetime.str_to_user(day.date) : ""}</td>
 						<td>${frappe.utils.escape_html(day.day || "")}</td>
-						<td>${day.in_time ? frappe.datetime.str_to_user(day.in_time, true) : ""}</td>
-						<td>${day.out_time ? frappe.datetime.str_to_user(day.out_time, true) : ""}</td>
+						<td>${day.in_time ? frappe.datetime.get_time(day.in_time) : ""}</td>
+						<td>${day.out_time ? frappe.datetime.get_time(day.out_time) : ""}</td>
 						<td>${(day.hours_worked || 0).toFixed(2)}</td>
 						<td>${flags}${holiday}${on_leave}${half_day_leave}</td>
 					</tr>
@@ -357,7 +385,7 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 						<th>${__("Day")}</th>
 						<th>${__("In")}</th>
 						<th>${__("Out")}</th>
-						<th>${__("Hours Worked")}</th>
+						<th title="${__("Sum of every clock-in/out pair this day, not simply Out minus In - a day with more than one session (e.g. a lunch break) has gaps in between that aren't worked time.")}">${__("Hours Worked")}</th>
 						<th>${__("Flags")}</th>
 					</tr>
 				</thead>
