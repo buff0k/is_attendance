@@ -248,13 +248,40 @@ def resolvable_row_count(rows: list[dict], fallback_branch: str | None) -> int:
 	return count
 
 
+def assign_employee_code(employee_code: str, employee: str) -> bool:
+	"""Writes `employee_code` onto Employee.attendance_device_id
+	permanently (unless it's already correctly set there), so this code
+	resolves on its own from now on - across every import doctype that
+	uses this module, not just wherever this call came from. Throws on a
+	genuine conflict (code already claimed by a different Employee)
+	rather than silently overwriting it. Returns whether this call
+	actually changed anything (False if that Employee already owned this
+	code - nothing new to propagate).
+
+	Shared by apply_resolved_issues() (one Issues row at a time, from a
+	document's own save) and the central Clocking Import Issues page's
+	own resolve action (one aggregated code at a time, independent of any
+	particular document)."""
+	existing_owner = frappe.db.get_value("Employee", {"attendance_device_id": employee_code}, "name")
+	if existing_owner and existing_owner != employee:
+		frappe.throw(
+			_(
+				"Employee code {0} is already assigned to Employee {1}, not {2}. "
+				"Fix the mapping before saving."
+			).format(employee_code, existing_owner, employee)
+		)
+
+	if existing_owner == employee:
+		return False
+
+	frappe.db.set_value("Employee", employee, "attendance_device_id", employee_code)
+	return True
+
+
 def apply_resolved_issues(doc) -> set[str]:
 	"""For every issues row the user has filled an Employee into, write
-	that mapping onto Employee.attendance_device_id permanently (unless
-	it's already correctly set), so this code resolves on its own from now
-	on - across every import doctype that uses this module, not just this
-	one document. Throws on a genuine conflict (code already claimed by a
-	different Employee) rather than silently overwriting it.
+	that mapping onto Employee.attendance_device_id permanently (see
+	assign_employee_code above).
 
 	Returns the set of employee codes this call just resolved for the
 	first time - used by refresh_readiness() to propagate the fix to every
@@ -267,56 +294,42 @@ def apply_resolved_issues(doc) -> set[str]:
 		if not row.employee:
 			continue
 
-		existing_owner = frappe.db.get_value(
-			"Employee", {"attendance_device_id": row.employee_code}, "name"
-		)
-		if existing_owner and existing_owner != row.employee:
-			frappe.throw(
-				_(
-					"Employee code {0} is already assigned to Employee {1}, not {2}. "
-					"Fix the mapping on the Issues row before saving."
-				).format(row.employee_code, existing_owner, row.employee)
-			)
-
-		if existing_owner != row.employee:
-			frappe.db.set_value("Employee", row.employee, "attendance_device_id", row.employee_code)
+		if assign_employee_code(row.employee_code, row.employee):
 			newly_resolved.add(row.employee_code)
 
 	return newly_resolved
 
 
-def resync_other_drafts(doc, newly_resolved_codes: set[str]) -> None:
-	"""After this document's own save just resolved one or more employee
-	codes globally (apply_resolved_issues), find every OTHER Draft
-	Clocking * Import document (any doctype in IMPORT_ISSUE_DOCTYPES) that
-	still lists one of those codes as unresolved, and simply re-save it.
-	Its own validate() (validate_import -> refresh_readiness) then redoes
-	its own readiness check with the benefit of the mapping this document
-	just wrote - clearing the stale Issue and, if that was its last one,
-	flipping it straight to "Pending Import" (which in turn schedules its
-	own auto-queue via after_save_hook() below) - without a human needing
-	to open and re-save that earlier document by hand.
+def resync_drafts_for_codes(codes: set[str], skip: tuple[str, str] | None = None) -> list[str]:
+	"""Re-saves every Draft Clocking * Import document (any doctype in
+	IMPORT_ISSUE_DOCTYPES) that currently lists one of `codes` as an
+	unresolved Issue. Its own validate() (validate_import ->
+	refresh_readiness) then redoes its own readiness check with the
+	benefit of whatever mapping was just written to
+	Employee.attendance_device_id - clearing the stale Issue and, if that
+	was its last one, flipping it straight to "Pending Import" (which in
+	turn schedules its own auto-queue via after_save_hook() below) -
+	without a human needing to open and re-save that document by hand.
 
-	Safe against runaway recursion: a resynced document's own issues rows
-	never have `employee` pre-filled (only a human editing Issues in Desk
-	sets that), so its own apply_resolved_issues() always returns an empty
-	set, and this function immediately no-ops for it."""
-	if not newly_resolved_codes:
-		return
+	Shared by resync_other_drafts() (called from a document's own save,
+	so it passes `skip` to avoid resaving itself) and the central Clocking
+	Import Issues page's own resolve action (no "self" document, so
+	`skip` is left unset). Returns the names of every document actually
+	resaved, for the caller to report back."""
+	if not codes:
+		return []
 
+	resynced: list[str] = []
 	for other_doctype, issue_doctype in IMPORT_ISSUE_DOCTYPES.items():
 		parent_names = frappe.get_all(
 			issue_doctype,
-			filters={
-				"employee_code": ["in", sorted(newly_resolved_codes)],
-				"parenttype": other_doctype,
-			},
+			filters={"employee_code": ["in", sorted(codes)], "parenttype": other_doctype},
 			pluck="parent",
 			distinct=True,
 		)
 
 		for parent_name in parent_names:
-			if other_doctype == doc.doctype and parent_name == doc.name:
+			if skip and (other_doctype, parent_name) == skip:
 				continue  # this document already just handled itself
 
 			other_doc = frappe.get_doc(other_doctype, parent_name)
@@ -324,6 +337,24 @@ def resync_other_drafts(doc, newly_resolved_codes: set[str]) -> None:
 				continue  # only a Draft can still have open Issues
 
 			other_doc.save(ignore_permissions=True)
+			resynced.append(parent_name)
+
+	return resynced
+
+
+def resync_other_drafts(doc, newly_resolved_codes: set[str]) -> None:
+	"""After this document's own save just resolved one or more employee
+	codes globally (apply_resolved_issues), propagate that to every OTHER
+	Draft import document still stuck on one of those codes (see
+	resync_drafts_for_codes above) - this document's own `doc`/`name` is
+	excluded, since it already just handled itself.
+
+	Safe against runaway recursion: a resynced document's own issues rows
+	never have `employee` pre-filled (only a human editing Issues in Desk,
+	or the central Clocking Import Issues page, sets that), so its own
+	apply_resolved_issues() always returns an empty set, and
+	resync_drafts_for_codes immediately no-ops for it."""
+	resync_drafts_for_codes(newly_resolved_codes, skip=(doc.doctype, doc.name))
 
 
 def rebuild_issues(doc, rows: list[dict]) -> None:
