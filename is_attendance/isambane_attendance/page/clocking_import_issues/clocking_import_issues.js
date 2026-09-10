@@ -21,12 +21,23 @@
  * the active nav-link and tab-pane by hand on click.
  *
  * Each table row carries an inline Link control
- * (frappe.ui.form.make_control). The Employee Codes table supports
- * setting several rows' Employee before resolving anything - a picked
- * Employee just sits in that row's own control until "Resolve Selected"
- * is clicked, which resolves every row that currently has one set in a
- * single batch call (resolve_employee_codes_bulk), rather than one round
+ * (frappe.ui.form.make_control), deliberately unfiltered (see its own
+ * comment) - the Employee Codes table supports setting several rows'
+ * Employee before doing anything, via either of two actions: "Resolve
+ * Selected" (the code IS that Employee's own clocking ID -
+ * resolve_employee_codes_bulk) or "Override to Employee" (a misconfigured
+ * device/old machine - override_employee_codes_bulk, see
+ * Clocking ID Override). A picked Employee just sits in that row's own
+ * control until one of those is clicked, which applies every row that
+ * currently has one set in a single batch call, rather than one round
  * trip per row.
+ *
+ * The codes table's own height is capped with an internal scroll (see
+ * .cii-codes-table) rather than growing the whole page - the toolbar
+ * above it (search, live "N selected" count, both action buttons) sits
+ * in normal flow above that bounded box, so it's simply always on
+ * screen while working through a long list, with no need for
+ * position:sticky against Desk's own (version-dependent) page chrome.
  */
 
 const CII_STATUS_COLORS = {
@@ -55,6 +66,7 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 	constructor(page) {
 		this.page = page;
 		this.page.set_primary_action(__("Refresh"), () => this.run(), "refresh");
+		this.page.set_secondary_action(__("Export to Excel"), () => this.export_excel(), "download");
 		cii_ensure_style();
 		this.make_body();
 		this.run();
@@ -82,19 +94,20 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 				<div class="tab-content">
 					<div class="tab-pane active" id="cii-tab-codes" role="tabpanel">
 						<div class="cii-section">
-							<div class="cii-section-header cii-section-header-with-action">
-								<div>
-									<p class="text-muted">${__(
-										"Every badge/PIN number in a Draft Clocking Import that doesn't match any Employee - resolving one here clears it from every document stuck on it, not just one. Set as many Employees below as you like, then resolve them all in one go."
-									)}</p>
-								</div>
-								<button class="btn btn-sm btn-primary cii-resolve-selected-btn">${__("Resolve Selected")}</button>
+							<div class="cii-section-header">
+								<p class="text-muted">${__(
+									"Every badge/PIN number in a Draft Clocking Import that doesn't match any Employee - resolving one here clears it from every document stuck on it, not just one. Set as many Employees below as you like (scroll freely - the toolbar below follows you), then apply them all in one go. Use \"Resolve\" when the code IS that Employee's own clocking ID; use \"Override to Employee\" when it's a misconfigured device/old machine that should still create Checkins for them, without touching their real ID."
+								)}</p>
 							</div>
-							<div class="cii-codes-search-row">
+							<div class="cii-codes-toolbar">
 								<input type="text" class="form-control input-sm cii-code-search" placeholder="${__(
 									"Search Employee Code..."
 								)}">
 								<span class="text-muted cii-codes-search-count"></span>
+								<span class="cii-codes-toolbar-spacer"></span>
+								<span class="text-muted cii-codes-selected-count"></span>
+								<button class="btn btn-sm btn-default cii-override-selected-btn">${__("Override to Employee")}</button>
+								<button class="btn btn-sm btn-primary cii-resolve-selected-btn">${__("Resolve Selected")}</button>
 							</div>
 							<div class="cii-codes-table cii-table-wrap"></div>
 						</div>
@@ -121,9 +134,11 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 		this.$machines_table = this.$body.find(".cii-machines-table");
 		this.$codes_search = this.$body.find(".cii-code-search");
 		this.$codes_search_count = this.$body.find(".cii-codes-search-count");
+		this.$selected_count = this.$body.find(".cii-codes-selected-count");
 
 		this.employee_controls = [];
 		this.$body.find(".cii-resolve-selected-btn").on("click", () => this.resolve_selected());
+		this.$body.find(".cii-override-selected-btn").on("click", () => this.override_selected());
 		// Static markup, not re-rendered by render_codes() (which would wipe
 		// the typed value and this listener) - wired once here, applied
 		// again at the end of every render_codes() so an active search term
@@ -154,6 +169,21 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 		this.$codes_search_count.text(term ? __("{0} of {1} shown", [shown, $rows.length]) : "");
 	}
 
+	update_selected_count() {
+		const count = this.employee_controls.filter(({ control }) => control.get_value()).length;
+		this.$selected_count.text(count ? __("{0} selected", [count]) : "");
+	}
+
+	export_excel() {
+		// A binary file response, not JSON - frappe.call can't hand this to
+		// the browser as a download, hence open_url_post (a plain hidden
+		// POST-form submit) instead, same pattern already used for
+		// Sage Payroll Run's own "Export .txt" button.
+		open_url_post(frappe.request.url, {
+			cmd: "is_attendance.isambane_attendance.page.clocking_import_issues.clocking_import_issues.export_exceptions_excel",
+		});
+	}
+
 	wire_tabs() {
 		// Desk doesn't actually activate Bootstrap's own automatic
 		// data-toggle="tab" plugin (see the module comment up top) - switch
@@ -173,6 +203,40 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 	}
 
 	resolve_selected() {
+		// The code IS that Employee's own clocking ID - writes
+		// Employee.attendance_device_id (resolve_employee_codes_bulk).
+		this._apply_selected(
+			"is_attendance.isambane_attendance.page.clocking_import_issues.clocking_import_issues.resolve_employee_codes_bulk",
+			{
+				verb_ing: __("Resolving"),
+				done_msg: __("Resolved {0} code(s) - affected documents are resyncing in the background."),
+				done_msg_with_failures: __(
+					"Resolved {0} code(s) - {1} failed. Affected documents are resyncing in the background."
+				),
+				failures_title: __("Some codes could not be resolved"),
+			}
+		);
+	}
+
+	override_selected() {
+		// The code is NOT that Employee's own clocking ID (a misconfigured
+		// device/old machine) - adds it to their Clocking ID Override
+		// instead, so it also produces Checkins for them without ever
+		// touching Employee.attendance_device_id (override_employee_codes_bulk).
+		this._apply_selected(
+			"is_attendance.isambane_attendance.page.clocking_import_issues.clocking_import_issues.override_employee_codes_bulk",
+			{
+				verb_ing: __("Overriding"),
+				done_msg: __("Overrode {0} code(s) to their Employee - affected documents are resyncing in the background."),
+				done_msg_with_failures: __(
+					"Overrode {0} code(s) - {1} failed. Affected documents are resyncing in the background."
+				),
+				failures_title: __("Some codes could not be overridden"),
+			}
+		);
+	}
+
+	_apply_selected(method, messages) {
 		const mappings = this.employee_controls
 			.map(({ employee_code, control }) => ({ employee_code, employee: control.get_value() }))
 			.filter((row) => row.employee);
@@ -183,31 +247,26 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 		}
 
 		frappe.call({
-			method: "is_attendance.isambane_attendance.page.clocking_import_issues.clocking_import_issues.resolve_employee_codes_bulk",
+			method: method,
 			args: { mappings: mappings },
 			freeze: true,
-			freeze_message: __("Resolving {0} code(s)...", [mappings.length]),
+			freeze_message: __("{0} {1} code(s)...", [messages.verb_ing, mappings.length]),
 			callback: (r) => {
 				const result = r.message || {};
 				const resolved = result.resolved || [];
 				const failed = result.failed || [];
 
-				// The Employee.attendance_device_id writes above are
-				// already done by the time this callback runs, but
-				// resyncing every affected Draft document (a full re-save
-				// each - see resolve_employee_codes_bulk's own docstring)
-				// is queued as a background job, not done inline - so
-				// those documents won't reflect the resolution
-				// immediately. The run() below still shows accurate
-				// current state; it just may not have caught up yet for a
-				// few seconds on a large batch.
+				// The write above is already done by the time this
+				// callback runs, but resyncing every affected Draft
+				// document (a full re-save each) is queued as a
+				// background job, not done inline - so those documents
+				// won't reflect it immediately. The run() below still
+				// shows accurate current state; it just may not have
+				// caught up yet for a few seconds on a large batch.
 				frappe.show_alert({
 					message: failed.length
-						? __("Resolved {0} code(s) - {1} failed. Affected documents are resyncing in the background.", [
-								resolved.length,
-								failed.length,
-						  ])
-						: __("Resolved {0} code(s) - affected documents are resyncing in the background.", [resolved.length]),
+						? __(messages.done_msg_with_failures, [resolved.length, failed.length])
+						: __(messages.done_msg, [resolved.length]),
 					indicator: failed.length ? "orange" : "green",
 				});
 
@@ -216,7 +275,7 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 						.map((f) => `<li>${frappe.utils.escape_html(f.employee_code)}: ${frappe.utils.escape_html(f.error)}</li>`)
 						.join("");
 					frappe.msgprint({
-						title: __("Some codes could not be resolved"),
+						title: messages.failures_title,
 						indicator: "orange",
 						message: `<ul>${rows}</ul>`,
 					});
@@ -329,6 +388,7 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 		if (!rows.length) {
 			this.$codes_table.html(`<div class="cii-empty">${__("No unresolved employee codes - every Draft Clocking Import fully resolves.")}</div>`);
 			this.$codes_search_count.text("");
+			this.update_selected_count();
 			return;
 		}
 
@@ -369,27 +429,36 @@ is_attendance.ClockingImportIssues = class ClockingImportIssues {
 					options: "Employee",
 					fieldname: "employee",
 					placeholder: __("Select Employee"),
-					// Only an Employee with no Clocking ID of their own yet -
-					// picking one that already has a different code assigned
-					// would silently fail server-side (assign_employee_code's
-					// own conflict check), but worse, picking one whose code
-					// happens to already be THIS SAME resolved value is a
-					// trap the dropdown shouldn't even offer: excluding every
-					// Employee who already has any attendance_device_id set
-					// means every option shown here is actually safe to pick.
-					get_query: () => ({
-						filters: [["attendance_device_id", "in", ["", null]]],
-					}),
+					// Deliberately unfiltered - the two actions this same
+					// picker feeds want opposite Employees. "Resolve" wants
+					// one with NO Clocking ID yet (a different, already-
+					// claimed Employee is a genuine conflict); "Override to
+					// Employee" is normally used on exactly the opposite -
+					// an Employee whose own Clocking ID is already correct,
+					// who just also needs this extra misconfigured code
+					// routed to them. Filtering here would make one of the
+					// two actions impossible to use from this dropdown.
+					// Both server-side actions already validate their own
+					// case properly (assign_employee_code/assign_override_code)
+					// and report a genuine conflict back in `failed` - same
+					// as any other failure this page already surfaces.
 				},
 				render_input: true,
 			});
 			employee_control.refresh();
+			// Live "N selected" count in the sticky toolbar - fires on
+			// every value change (a pick, a clear, typing then blurring),
+			// not just on the two bulk actions themselves, so it's always
+			// an accurate running total while working through a long list.
+			employee_control.$input.on("change", () => this.update_selected_count());
 
 			// Not resolved on its own - just remembered here so
 			// "Resolve Selected" can pick up every row that has an
 			// Employee set, whenever it's clicked (see resolve_selected()).
 			this.employee_controls.push({ employee_code: row.employee_code, control: employee_control });
 		});
+
+		this.update_selected_count();
 
 		// Re-applies whatever search term is already in the box (e.g. still
 		// there from before a refresh) to the freshly-rendered rows.
@@ -589,27 +658,42 @@ function cii_ensure_style() {
 			padding: 14px 18px 10px;
 			border-bottom: 1px solid var(--border-color, #d1d8dd);
 		}
-		.cii-section-header-with-action {
-			display: flex;
-			align-items: flex-start;
-			justify-content: space-between;
-			gap: 16px;
-		}
-		.cii-section-header-with-action .cii-resolve-selected-btn { flex-shrink: 0; }
 		.cii-section-header h4 { margin: 0 0 4px; }
 		.cii-section-header p { margin: 0; font-size: 12px; }
 
-		.cii-codes-search-row {
+		/* Deliberately NOT position:sticky against the page's own scroll -
+		   Desk's page chrome height isn't a stable thing to peg a "top"
+		   offset to (varies by version/breadcrumbs), and a mismatch would
+		   just hide this bar behind Desk's own sticky title bar. Instead
+		   the codes table below is height-capped with its own internal
+		   scroll (see .cii-codes-table) - this toolbar sits in normal flow
+		   above that bounded box, so it's simply always on screen, no
+		   sticky trickery needed. */
+		.cii-codes-toolbar {
 			display: flex;
 			align-items: center;
+			flex-wrap: wrap;
 			gap: 10px;
 			padding: 10px 18px;
 			border-bottom: 1px solid var(--border-color, #d1d8dd);
 		}
 		.cii-code-search { max-width: 260px; }
 		.cii-codes-search-count { font-size: 12px; white-space: nowrap; }
+		.cii-codes-toolbar-spacer { flex: 1 1 auto; }
+		.cii-codes-selected-count { font-size: 12px; white-space: nowrap; }
 
 		.cii-table-wrap { overflow-x: auto; width: 100%; max-width: 100%; min-width: 0; }
+		/* Only the codes table gets height-capped - it's the one that can
+		   run to hundreds of rows (see module docstring); the machines
+		   table is normally short enough that capping it would just add an
+		   unnecessary inner scrollbar for no benefit. */
+		.cii-codes-table { max-height: 60vh; overflow-y: auto; }
+		.cii-codes-table thead th {
+			position: sticky;
+			top: 0;
+			z-index: 1;
+			background: var(--card-bg, #fff);
+		}
 		.cii-empty { padding: 24px 18px; color: var(--text-muted); font-size: 13px; }
 
 		.cii-table { width: 100%; max-width: 100%; border-collapse: collapse; font-size: 13px; }

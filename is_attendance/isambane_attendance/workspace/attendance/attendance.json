@@ -2,7 +2,7 @@
  "app": "is_attendance",
  "charts": [],
  "content": "[{\"id\":\"aTdc1WkQpZ\",\"type\":\"header\",\"data\":{\"text\":\"<span class=\\\"h4\\\">Attendance</span>\",\"col\":12}},{\"id\":\"bR7fLmNq3H\",\"type\":\"card\",\"data\":{\"card_name\":\"Attendance Tracking\",\"col\":4}},{\"id\":\"cQ2mZpX9wL\",\"type\":\"card\",\"data\":{\"card_name\":\"Reports & Dashboard\",\"col\":4}},{\"id\":\"dR3nApY0xM\",\"type\":\"card\",\"data\":{\"card_name\":\"Import & Export\",\"col\":4}},{\"id\":\"fT8pLkNq2X\",\"type\":\"card\",\"data\":{\"card_name\":\"Payroll\",\"col\":4}},{\"id\":\"eS4oBqZ1yN\",\"type\":\"card\",\"data\":{\"card_name\":\"Settings\",\"col\":4}}]",
- "creation": "2026-09-03 09:24:57.000000",
+ "creation": "2026-09-03 09:24:57",
  "custom_blocks": [],
  "docstatus": 0,
  "doctype": "Workspace",
@@ -57,7 +57,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Reports & Dashboard",
-   "link_count": 3,
+   "link_count": 4,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -97,8 +97,18 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Clocking Import Issues",
+   "link_count": 0,
+   "link_to": "clocking-import-issues",
+   "link_type": "Page",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Import & Export",
-   "link_count": 3,
+   "link_count": 2,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -116,16 +126,6 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Clocking Import Issues",
-   "link_count": 0,
-   "link_to": "clocking-import-issues",
-   "link_type": "Page",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
    "label": "Attendance Export",
    "link_count": 0,
    "link_to": "attendance-export",
@@ -137,20 +137,10 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Payroll",
-   "link_count": 3,
+   "link_count": 2,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Sage Payroll Company",
-   "link_count": 0,
-   "link_to": "Sage Payroll Company",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
   },
   {
    "hidden": 0,
@@ -177,7 +167,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Settings",
-   "link_count": 2,
+   "link_count": 5,
    "link_type": "DocType",
    "onboard": 0,
    "type": "Card Break"
@@ -201,9 +191,39 @@
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Clocking ID Override",
+   "link_count": 0,
+   "link_to": "Clocking ID Override",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sage Payroll Company",
+   "link_count": 0,
+   "link_to": "Sage Payroll Company",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Sage Remote Controller",
+   "link_count": 0,
+   "link_to": "Sage Remote Controller",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
   }
  ],
- "modified": "2026-09-09 14:00:00.000000",
+ "modified": "2026-09-10 10:01:01.349726",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Attendance",

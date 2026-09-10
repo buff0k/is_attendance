@@ -1,0 +1,40 @@
+{
+ "actions": [],
+ "creation": "2026-09-10 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "clocking_id",
+  "note"
+ ],
+ "fields": [
+  {
+   "description": "The raw code a misconfigured device actually sends - checked against Clocking Import rows only after the normal Employee.attendance_device_id match fails, so this never overrides or competes with an employee's own correct code.",
+   "fieldname": "clocking_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Clocking ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "note",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Note",
+   "description": "Optional - e.g. \"Old machine before replacement\" or \"Machine 7 misconfigured\"."
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-10 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Clocking ID Override Code",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

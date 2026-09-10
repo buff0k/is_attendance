@@ -20,14 +20,16 @@ list_pending_pull_requests() is what notices and actually does the ODBC
 work. Nothing here decides on its own which Runs need pulling.
 
 Frappe's own Sage Payroll Company record is the sole source of truth for
-which Paypoints belong to a Company Number - the local config below
-deliberately doesn't duplicate that. It holds exactly two things Frappe
-has no business knowing: which local ODBC DSN serves each Company Number
-(host-local infrastructure), and whether *this* heartbeat instance is
-allowed to serve it (in case a second Windows host ever handles a
-different subset of companies). Everything else - Paypoints, Branch
-mapping, the Amt column layout - lives in Frappe and is read fresh on
-every poll.
+which Paypoints belong to a Company Number. The DSN-per-Company mapping
+used to live in this script's own local config too, but now lives on this
+controller's own Sage Remote Controller record in Frappe instead (fetched
+fresh every cycle via get_remote_controller_config, identified by which
+User this script's api_key/api_secret belong to) - the local config file
+now holds only what Frappe genuinely has no business knowing: how to reach
+this Frappe site and authenticate (base_url/api_key/api_secret), and how
+often to poll. This means a newly-enabled Company/edited DSN needs no
+redeploy or restart on the Windows host at all, and the "Connected
+controllers" summary on that doctype's own list view is always current.
 
 The query and connection shape below were extracted directly from the real
 Salary Sheet .xls files this integration was reverse-engineered from - a
@@ -117,12 +119,14 @@ def load_config() -> dict[str, Any]:
 		return json.load(file)
 
 
-def find_company_config(config: dict[str, Any], sage_company_no: str) -> dict[str, Any] | None:
-	"""Looks up the local DSN mapping for a Sage Company Number - just
+def find_company_config(companies: list[dict[str, Any]], sage_company_no: str) -> dict[str, Any] | None:
+	"""Looks up the DSN mapping for a Sage Company Number within this
+	cycle's own get_remote_controller_config() response - just
 	`{sage_company_no, dsn, enabled}`. Everything else about that Company
 	(Paypoints, Branch mapping, Amt layout) is read fresh from Frappe on
-	every poll, never duplicated here."""
-	for company in config.get("companies", []):
+	every poll, never duplicated here or on the Sage Remote Controller
+	record either."""
+	for company in companies:
 		if company.get("sage_company_no") == sage_company_no and company.get("enabled"):
 			return company
 	return None
@@ -171,6 +175,22 @@ def auth_headers(config: dict[str, Any]) -> dict[str, str]:
 	return {"Authorization": f"token {config['api_key']}:{config['api_secret']}"}
 
 
+def fetch_remote_controller_config(config: dict[str, Any]) -> list[dict[str, Any]]:
+	"""Polls is_attendance.controllers.sage_payroll.get_remote_controller_config
+	- this cycle's current {sage_company_no, dsn, enabled} list for
+	whichever Sage Remote Controller record matches this script's own
+	api_key/api_secret. Raises (via raise_for_status) if no such
+	controller is registered/enabled in Frappe yet - a clear, loud failure
+	in the log rather than silently pulling nothing every cycle."""
+	response = requests.get(
+		f"{config['base_url']}/api/method/is_attendance.controllers.sage_payroll.get_remote_controller_config",
+		headers=auth_headers(config),
+		timeout=30,
+	)
+	response.raise_for_status()
+	return (response.json().get("message") or {}).get("companies") or []
+
+
 def fetch_pending_requests(config: dict[str, Any]) -> list[dict[str, Any]]:
 	"""Polls is_attendance.controllers.sage_payroll.list_pending_pull_requests
 	- every Sage Payroll Run currently waiting on a pull, with the Sage
@@ -211,6 +231,12 @@ def post_to_frappe(config: dict[str, Any], sage_payroll_run: str, records: list[
 
 def run_heartbeat_cycle(config: dict[str, Any]) -> None:
 	try:
+		companies = fetch_remote_controller_config(config)
+	except requests.RequestException:
+		logging.exception("Failed to fetch this controller's Company/DSN config - check it's registered and enabled.")
+		return
+
+	try:
 		pending = fetch_pending_requests(config)
 	except requests.RequestException:
 		logging.exception("Failed to poll for pending pull requests.")
@@ -226,14 +252,13 @@ def run_heartbeat_cycle(config: dict[str, Any]) -> None:
 		run_name = request.get("run")
 		sage_company_no = request.get("sage_company_no")
 
-		company = find_company_config(config, sage_company_no)
+		company = find_company_config(companies, sage_company_no)
 		if not company:
 			logging.warning(
-				"Run %s wants Company %s, which isn't configured/enabled in %s - skipping "
-				"(fine if a different heartbeat instance owns that company).",
+				"Run %s wants Company %s, which isn't configured/enabled on this controller's own "
+				"Sage Remote Controller record in Frappe - skipping (fine if a different controller owns that company).",
 				run_name,
 				sage_company_no,
-				CONFIG_FILE,
 			)
 			continue
 

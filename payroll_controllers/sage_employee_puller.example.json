@@ -6,12 +6,5 @@
   "api_secret": "CHANGE_ME",
   "heartbeat_interval_seconds": 60,
 
-  "companies": [
-    {
-      "_comment": "One entry per Sage Company Number this host can serve - just a local DSN mapping + on/off switch. dsn must match a Windows ODBC DSN already configured on this PC (the same one the existing Excel/VBA payroll tooling uses). Everything else about this Company (Paypoints, Branch mapping, Amt column layout) lives on the matching Sage Payroll Company doctype in Frappe, not here - deliberately not duplicated in this file.",
-      "sage_company_no": "001",
-      "dsn": "VIP_Company001",
-      "enabled": false
-    }
-  ]
+  "_companies_comment": "Which Sage Company Numbers this host serves, and the local ODBC DSN for each, are no longer set here - they live on this controller's own Sage Remote Controller record in Frappe (Attendance workspace > Payroll > Sage Remote Controller), matched to whichever User api_key/api_secret above belong to. Create that record (or ask a Payroll Manager to) before running this script - fetched fresh every heartbeat cycle, so a newly-enabled Company/edited DSN needs no redeploy here."
 }

@@ -32,19 +32,30 @@ data isn't quite right yet" gaps that used to only be visible one document
   clocking_machine_branch_map()), so these can be filled in from one
   place instead of opening each device's own record to notice it's
   missing.
+
+export_exceptions_excel() gives both tables as one .xlsx (two sheets) for
+anyone who needs an offline copy or has to hand it to someone without
+Desk access - same underlying queries as the page itself, not a separate
+report to keep in sync.
 """
 
 from __future__ import annotations
 
+from io import BytesIO
+
 import frappe
+import xlsxwriter
 from frappe import _
+from frappe.desk.utils import provide_binary_file
 from frappe.utils.messages import clear_last_message
+from frappe.utils.xlsxutils import make_xlsx
 
 from is_attendance.controllers.clocking_import import (
 	IMPORT_JOB_TIMEOUT,
 	IMPORT_ISSUE_DOCTYPES,
 	RESYNC_DRAFTS_JOB_PATH,
 	assign_employee_code,
+	assign_override_code,
 )
 
 PAGE_ROLES = {"System Manager", "HR Manager", "IR Manager"}
@@ -219,6 +230,61 @@ def resolve_employee_codes_bulk(mappings) -> dict:
 
 
 @frappe.whitelist()
+def override_employee_codes_bulk(mappings) -> dict:
+	"""The Clocking ID Override counterpart to resolve_employee_codes_bulk()
+	above - same bulk shape and same background resync, but each pair goes
+	to assign_override_code() instead of assign_employee_code(), so the
+	code becomes an additional route to that Employee (see
+	Clocking ID Override's own module docstring) rather than being written
+	onto their Employee.attendance_device_id. Use this instead of the
+	normal Resolve action for a code that's genuinely a misconfigured
+	device/old machine ID rather than that Employee's real clocking
+	number - it never touches the Employee record itself.
+
+	`mappings` is a list of {"employee_code": ..., "employee": ...} dicts,
+	same shape as resolve_employee_codes_bulk()."""
+	_check_permission()
+
+	if isinstance(mappings, str):
+		mappings = frappe.parse_json(mappings)
+	if not mappings:
+		frappe.throw(_("Nothing to override - set at least one Employee first."))
+
+	resolved = []
+	failed = []
+	newly_resolved_codes: set[str] = set()
+
+	for mapping in mappings:
+		employee_code = mapping.get("employee_code")
+		employee = mapping.get("employee")
+		if not employee_code or not employee:
+			continue
+
+		try:
+			changed = assign_override_code(employee_code, employee)
+		except frappe.ValidationError as error:
+			clear_last_message()  # this pair's own frappe.throw() - reported in `failed` below instead
+			failed.append({"employee_code": employee_code, "employee": employee, "error": str(error)})
+			continue
+
+		resolved.append(employee_code)
+		if changed:
+			newly_resolved_codes.add(employee_code)
+
+	if newly_resolved_codes:
+		frappe.enqueue(
+			RESYNC_DRAFTS_JOB_PATH,
+			queue="long",
+			timeout=IMPORT_JOB_TIMEOUT,
+			job_name=f"is_attendance_resync_drafts_{frappe.generate_hash(length=8)}",
+			codes=sorted(newly_resolved_codes),
+			enqueue_after_commit=True,
+		)
+
+	return {"resolved": resolved, "failed": failed, "resync_queued": bool(newly_resolved_codes)}
+
+
+@frappe.whitelist()
 def get_incomplete_machines() -> list[dict]:
 	"""Every IS Attendance Clocking Machine with no Branch set yet."""
 	_check_permission()
@@ -245,3 +311,40 @@ def set_machine_branch(machine_id: str, branch: str) -> None:
 		frappe.throw(_("Clocking Machine {0} not found.").format(machine_id))
 
 	frappe.db.set_value("IS Attendance Clocking Machine", machine_id, "branch", branch)
+
+
+@frappe.whitelist()
+def export_exceptions_excel():
+	"""One .xlsx, two sheets - the same two tables this page itself shows
+	(get_unresolved_codes/get_incomplete_machines, called directly rather
+	than duplicating their queries), for whoever needs an offline copy to
+	work through or hand to someone without Desk access. Triggered from
+	the client via open_url_post (a plain GET/POST-form download, not
+	frappe.call - this response is binary, not JSON)."""
+	_check_permission()
+
+	codes = get_unresolved_codes()
+	machines = get_incomplete_machines()
+
+	xlsx_file = BytesIO()
+	wb = xlsxwriter.Workbook(xlsx_file, {"constant_memory": True})
+
+	codes_rows = [[_("Employee Code"), _("Occurrences"), _("Documents"), _("First Seen"), _("Machine ID(s)")]]
+	for row in codes:
+		codes_rows.append(
+			[row["employee_code"], row["occurrence_count"], row["document_count"], row["first_seen"] or "", row["machine_ids"]]
+		)
+	make_xlsx(codes_rows, "Unresolved Employee Codes", wb=wb)
+
+	machines_rows = [[_("Clocking Machine"), _("Machine ID"), _("Brand"), _("Model"), _("Location Notes")]]
+	for row in machines:
+		machines_rows.append(
+			[row["name"], row["machine_id"], row.get("brand") or "", row.get("model") or "", row.get("location_notes") or ""]
+		)
+	make_xlsx(machines_rows, "Machines Missing a Branch", wb=wb)
+
+	wb.close()
+	xlsx_file.seek(0)
+
+	timestamp = frappe.utils.now_datetime().strftime("%Y-%m-%d_%H%M")
+	provide_binary_file(f"clocking-import-exceptions-{timestamp}", "xlsx", xlsx_file.getvalue())
