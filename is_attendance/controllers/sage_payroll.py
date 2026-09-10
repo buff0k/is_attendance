@@ -157,7 +157,72 @@ def ingest_employees(run_doc, records) -> dict:
 		((run_doc.ingest_log or "") + "\n" + log_line).strip(),
 	)
 
+	_stamp_controller_sync(run_doc.name, log_line)
+
 	return {"created": created, "updated": updated, "unmatched": unmatched, "total": total}
+
+
+def _stamp_controller_sync(run_name: str, summary: str) -> None:
+	"""Records this successful ingest against whichever Sage Remote
+	Controller posted it (identified by frappe.session.user, same as
+	get_remote_controller_config()) - purely for the last-sync visibility
+	on that doctype's own list view. Silently does nothing if the caller
+	isn't a registered controller (e.g. a person triggering this by hand
+	from the desk) - that's a normal case, not an error."""
+	controller_name = frappe.db.get_value("Sage Remote Controller", {"api_user": frappe.session.user}, "name")
+	if not controller_name:
+		return
+
+	frappe.db.set_value(
+		"Sage Remote Controller",
+		controller_name,
+		{"last_sync_at": now_datetime(), "last_sync_summary": f"{run_name}: {summary}"},
+	)
+
+
+@frappe.whitelist()
+def get_remote_controller_config() -> dict:
+	"""Polled by sage_employee_puller.py once per heartbeat cycle, before
+	fetch_pending_requests() - replaces the old local `companies` block in
+	sage_employee_puller.json (dsn + Sage Company Number mappings used to
+	live only on the Windows host, duplicated by hand in a gitignored file
+	there; now they're a Sage Remote Controller record here instead, one
+	per deployed controller).
+
+	Identifies the calling controller by frappe.session.user (the User its
+	api_key/api_secret belong to) - no separate controller ID needs to be
+	configured on the host itself. Also stamps last_heartbeat, exactly
+	like the old heartbeat-liveness signal list_pending_pull_requests()
+	already provided, just now recorded somewhere a person can see it (the
+	Sage Remote Controller list view) instead of only in that host's own
+	local log file."""
+	_require_payroll_role()
+
+	controller_name = frappe.db.get_value(
+		"Sage Remote Controller", {"api_user": frappe.session.user, "enabled": 1}, "name"
+	)
+	if not controller_name:
+		frappe.throw(
+			_(
+				"No enabled Sage Remote Controller is registered for User {0}. "
+				"Create one (or enable the existing one) before this heartbeat can be configured."
+			).format(frappe.session.user)
+		)
+
+	frappe.db.set_value("Sage Remote Controller", controller_name, "last_heartbeat", now_datetime())
+	frappe.db.commit()
+
+	controller = frappe.get_cached_doc("Sage Remote Controller", controller_name)
+	return {
+		"companies": [
+			{
+				"sage_company_no": row.sage_payroll_company,
+				"dsn": row.dsn,
+				"enabled": bool(row.enabled),
+			}
+			for row in controller.companies
+		]
+	}
 
 
 @frappe.whitelist()

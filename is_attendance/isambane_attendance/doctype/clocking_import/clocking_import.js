@@ -22,9 +22,18 @@ frappe.ui.form.on("Clocking Import", {
 		// Shows whenever there's at least one row ready to import, not just
 		// once everything resolves - "Missing Information" and "Partially
 		// Imported" both allow it now (see the .py module docstring): a file
-		// only ever refuses to run when resolvable_count is 0.
+		// only ever refuses to run when resolvable_count is 0. "Error" is
+		// included too - render_status() below has always told the user to
+		// "fix the issue and click Start Import again" for that status, but
+		// the button itself was never actually offered there, so that
+		// instruction couldn't be followed. resolvable_count still holds
+		// whatever queue_import() last computed right before the failed
+		// attempt (run_import_job()'s own except handler reloads the
+		// document rather than leaving it in some half-updated in-memory
+		// state, but doesn't touch resolvable_count), so this condition
+		// works the same way for Error as it already does for the others.
 		const can_start_import =
-			["Pending Import", "Missing Information", "Partially Imported"].includes(frm.doc.status) &&
+			["Pending Import", "Missing Information", "Partially Imported", "Error"].includes(frm.doc.status) &&
 			frm.doc.resolvable_count;
 
 		if (can_start_import) {

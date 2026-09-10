@@ -41,7 +41,8 @@ Every doctype that uses this module must:
 
 - Have fields named exactly: file, branch (Fallback Branch), status,
   total_rows, unresolved_count, resolvable_count, employees_without_branch,
-  issues (Table), created_checkins (Table), import_log.
+  issues (Table), created_checkins (Table), import_log,
+  stall_recovery_attempts (Int, hidden - see recover_stalled_imports()).
 - Its `issues` Table's child doctype must have fields: employee_code,
   machine_id, occurrence_count, first_seen, employee.
 - Its `created_checkins` Table's child doctype must have a `checkin` field.
@@ -60,7 +61,7 @@ import time
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, getdate
+from frappe.utils import add_days, add_to_date, getdate, now_datetime
 
 from is_attendance.controllers.attendance_sync import (
 	recompute_attendance_for_employee_day,
@@ -70,6 +71,26 @@ IMPORT_JOB_TIMEOUT = 60 * 60  # a large file needs far longer than a web request
 RUN_IMPORT_JOB_PATH = "is_attendance.controllers.clocking_import.run_import_job"
 QUEUE_IMPORT_BY_NAME_PATH = "is_attendance.controllers.clocking_import.queue_import_by_name"
 RESYNC_DRAFTS_JOB_PATH = "is_attendance.controllers.clocking_import.resync_drafts_for_codes_job"
+
+# A document can only genuinely still be "Importing" for as long as its own
+# background job is allowed to run - RQ itself kills anything past
+# IMPORT_JOB_TIMEOUT, so a document still sitting at that status well
+# beyond it cannot possibly be legitimate work in progress; the job either
+# crashed somewhere execute_job() doesn't catch, or the worker process
+# running it was killed outright (a restart, an OOM) - both leave no
+# trace at all, nothing to retry automatically on its own. The extra 10
+# minutes of slack is just to comfortably clear IMPORT_JOB_TIMEOUT's own
+# enforcement lag, not because a legitimate run could ever need it.
+STALL_THRESHOLD_MINUTES = IMPORT_JOB_TIMEOUT // 60 + 10
+# Re-running a stuck import is safe (run_import_job()/create_checkins()
+# are idempotent) but not infinitely so - if it stalls again this many
+# times in a row, something genuinely wrong is more likely than repeated
+# bad luck, and silently retrying forever would just hide that. Capped
+# recovery escalates to "Error" instead (see recover_stalled_imports()),
+# same as any other failure - a person needs to look, and can retry
+# manually from there once they have (queue_import() resets this counter
+# on every deliberate, human-triggered attempt).
+MAX_STALL_RECOVERY_ATTEMPTS = 3
 
 _ATTLOG_SUFFIX = re.compile(r"_?attlog$", re.IGNORECASE)
 _KNOWN_EXTENSION = re.compile(r"\.(dat|csv|txt)$", re.IGNORECASE)
@@ -108,11 +129,40 @@ IMPORT_ISSUE_DOCTYPES = {
 def resolve_employee(row: dict) -> str | None:
 	"""Match a parsed row to an Employee via `employee_code` against
 	Employee.attendance_device_id - the standard HRMS field for exactly
-	this purpose (also what `ir`'s Monthly Attendance report uses)."""
+	this purpose (also what `ir`'s Monthly Attendance report uses).
+
+	Falls back to Clocking ID Override only when that direct match fails -
+	an employee's own correct code always wins first, so an override can
+	never redirect a code away from where it already, correctly resolves.
+	The two are additive, not exclusive: an employee with both their own
+	attendance_device_id AND an override code gets Checkins from either
+	one reaching this function, since every row is resolved independently."""
 	employee_code = row.get("employee_code")
 	if not employee_code:
 		return None
-	return frappe.db.get_value("Employee", {"attendance_device_id": employee_code}, "name")
+	employee = frappe.db.get_value("Employee", {"attendance_device_id": employee_code}, "name")
+	if employee:
+		return employee
+	return _resolve_via_override(employee_code)
+
+
+def _resolve_via_override(employee_code: str) -> str | None:
+	"""Clocking ID Override fallback - see that doctype's own module
+	docstring. Only reached for a code with no direct Employee match, so
+	this is a genuinely rare path (a handful of known-misconfigured codes,
+	not the normal case) - a couple of small indexed lookups here per miss
+	is fine, no batching needed."""
+	parent = frappe.db.get_value(
+		"Clocking ID Override Code",
+		{"clocking_id": employee_code, "parenttype": "Clocking ID Override"},
+		"parent",
+	)
+	if not parent:
+		return None
+	override = frappe.db.get_value("Clocking ID Override", parent, ["employee", "enabled"], as_dict=True)
+	if not override or not override.enabled:
+		return None
+	return override.employee
 
 
 def employee_branch_map(rows: list[dict]) -> dict[str, str | None]:
@@ -277,6 +327,46 @@ def assign_employee_code(employee_code: str, employee: str) -> bool:
 		return False
 
 	frappe.db.set_value("Employee", employee, "attendance_device_id", employee_code)
+	return True
+
+
+def assign_override_code(employee_code: str, employee: str) -> bool:
+	"""The Clocking ID Override counterpart to assign_employee_code() above -
+	same conflict-checked-write shape, but adds `employee_code` to that
+	Employee's own Clocking ID Override record (creating it if this is
+	their first override code) instead of touching
+	Employee.attendance_device_id at all. Used when a code doesn't belong
+	to this Employee in the normal sense (a misconfigured device, an old
+	machine ID) but their Checkins should still be created from it -
+	see resolve_employee()'s own fallback to this table. Throws on a
+	genuine conflict (code already overridden to a different Employee, or
+	already some Employee's own real attendance_device_id) via
+	ClockingIDOverride.validate(). Returns whether this call actually
+	added a new code (False if that Employee's override already listed
+	it - nothing new to propagate)."""
+	existing_parent = frappe.db.get_value(
+		"Clocking ID Override Code",
+		{"clocking_id": employee_code, "parenttype": "Clocking ID Override"},
+		"parent",
+	)
+	if existing_parent:
+		if existing_parent != employee:
+			frappe.throw(
+				_(
+					"Clocking ID {0} is already overridden to Employee {1}, not {2}. "
+					"Fix the mapping before saving."
+				).format(employee_code, existing_parent, employee)
+			)
+		return False  # this Employee's own override already lists this code
+
+	if frappe.db.exists("Clocking ID Override", employee):
+		override = frappe.get_doc("Clocking ID Override", employee)
+	else:
+		override = frappe.new_doc("Clocking ID Override")
+		override.employee = employee
+
+	override.append("override_codes", {"clocking_id": employee_code})
+	override.save(ignore_permissions=True)
 	return True
 
 
@@ -602,6 +692,11 @@ def queue_import(doc) -> None:
 		)
 
 	doc.status = "Importing"
+	# A deliberate new attempt (this call) resets the stall-recovery
+	# counter (see recover_stalled_imports()) - that counter tracks
+	# consecutive *automated* recovery attempts specifically, so it
+	# shouldn't carry over into counting against a person's own retry.
+	doc.stall_recovery_attempts = 0
 	# This call is itself already the explicit "start importing" action -
 	# no need for the auto-queue after_save_hook() to also react to
 	# whatever refresh_readiness() just above set on the way here.
@@ -831,6 +926,79 @@ def run_import_job(doctype: str, docname: str) -> None:
 		doc.import_log = frappe.get_traceback()
 		doc.save(ignore_permissions=True)
 		frappe.db.commit()
+
+
+def recover_stalled_imports() -> dict:
+	"""Scheduled watchdog (see hooks.py scheduler_events, every 15
+	minutes) - finds every Clocking * Import document (any doctype in
+	IMPORT_ISSUE_DOCTYPES) stuck at status="Importing" well past
+	IMPORT_JOB_TIMEOUT (STALL_THRESHOLD_MINUTES - RQ itself kills
+	anything running longer than that, so a document still sitting at
+	"Importing" beyond it cannot possibly be legitimate work still in
+	progress) and re-queues it. Safe because
+	run_import_job()/create_checkins() are idempotent - already-created
+	Checkins are simply skipped, no duplicates, whether the original
+	attempt genuinely never ran at all or quietly finished without
+	updating its own status.
+
+	Not retried forever: a document that's stalled this way
+	MAX_STALL_RECOVERY_ATTEMPTS times in a row is flipped straight to
+	"Error" instead of being queued again, so a *repeatedly* stalling
+	document surfaces for a person to look at (see queue_import(), which
+	resets this counter on every deliberate, human-triggered attempt -
+	only consecutive *automated* recoveries count against the cap).
+	Re-queued as a background job (frappe.enqueue), same as a normal
+	"Start Import" click - never run inline here, since this task itself
+	could otherwise end up serialising several large re-imports back to
+	back within one scheduler tick."""
+	threshold = add_to_date(now_datetime(), minutes=-STALL_THRESHOLD_MINUTES, as_string=False)
+
+	recovered = []
+	escalated = []
+
+	for doctype in IMPORT_ISSUE_DOCTYPES:
+		stalled = frappe.get_all(
+			doctype,
+			filters={"status": "Importing", "modified": ["<", threshold]},
+			fields=["name", "stall_recovery_attempts"],
+		)
+
+		for row in stalled:
+			attempts = row.stall_recovery_attempts or 0
+
+			if attempts >= MAX_STALL_RECOVERY_ATTEMPTS:
+				existing_log = frappe.db.get_value(doctype, row.name, "import_log") or ""
+				frappe.db.set_value(
+					doctype,
+					row.name,
+					{
+						"status": "Error",
+						"import_log": (
+							existing_log
+							+ f"\n\n{now_datetime()}: auto-recovery gave up after {attempts} stalled "
+							'attempt(s) in a row - needs a person to look at this. Fix whatever\'s '
+							'blocking it, then click "Start Import" to retry.'
+						),
+					},
+				)
+				frappe.db.commit()
+				escalated.append(row.name)
+				continue
+
+			frappe.db.set_value(doctype, row.name, "stall_recovery_attempts", attempts + 1)
+			frappe.db.commit()
+
+			frappe.enqueue(
+				RUN_IMPORT_JOB_PATH,
+				queue="long",
+				timeout=IMPORT_JOB_TIMEOUT,
+				job_name=f"is_attendance_stall_recovery_{doctype}_{row.name}_{frappe.generate_hash(length=8)}",
+				doctype=doctype,
+				docname=row.name,
+			)
+			recovered.append(row.name)
+
+	return {"recovered": recovered, "escalated": escalated}
 
 
 def create_checkins(doc, rows: list[dict]) -> tuple[int, int, int]:

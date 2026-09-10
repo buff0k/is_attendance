@@ -1,0 +1,49 @@
+{
+ "actions": [],
+ "creation": "2026-09-10 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "sage_payroll_company",
+  "dsn",
+  "enabled"
+ ],
+ "fields": [
+  {
+   "fieldname": "sage_payroll_company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sage Payroll Company",
+   "options": "Sage Payroll Company",
+   "reqd": 1
+  },
+  {
+   "description": "The Windows ODBC DSN this controller's own host uses for this Company Number (e.g. \"VIP_Company001\") - host-local infrastructure, which is why it's declared per-controller here rather than on Sage Payroll Company itself: a second controller serving the same Company Number on a different PC could have it configured under a different local DSN name.",
+   "fieldname": "dsn",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "DSN",
+   "reqd": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-10 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Sage Remote Controller Company",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

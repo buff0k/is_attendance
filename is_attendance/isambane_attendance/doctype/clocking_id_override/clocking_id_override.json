@@ -1,0 +1,85 @@
+{
+ "actions": [],
+ "autoname": "field:employee",
+ "creation": "2026-09-10 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "enabled",
+  "notes",
+  "codes_section",
+  "override_codes"
+ ],
+ "fields": [
+  {
+   "description": "Checkins for this employee get created from BOTH their own, correct Employee.attendance_device_id AND every code listed below - this never changes or touches the Employee record's own clocking ID.",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "codes_section",
+   "fieldtype": "Section Break",
+   "label": "Override Codes"
+  },
+  {
+   "description": "One or more raw clocking codes that should resolve to this Employee, in addition to their own attendance_device_id - e.g. a second/old machine ID, or a device known to be misconfigured for this person. Checked only for codes that don't already match some Employee's own attendance_device_id directly, so it can never redirect a code away from its correct owner.",
+   "fieldname": "override_codes",
+   "fieldtype": "Table",
+   "label": "Override Codes",
+   "options": "Clocking ID Override Code",
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-10 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Clocking ID Override",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

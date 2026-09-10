@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "file",
+  "owner",
   "branch",
   "column_break_status",
   "status",
@@ -21,6 +22,7 @@
   "log_section",
   "import_log",
   "created_checkins",
+  "stall_recovery_attempts",
   "amended_from"
  ],
  "fields": [
@@ -33,10 +35,18 @@
    "reqd": 1
   },
   {
+   "description": "Standard field, overridden here purely to surface it as a list column/filter - who attached/queued this import.",
+   "fieldname": "owner",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Uploaded By",
+   "options": "User"
+  },
+  {
    "description": "Checkins always use the employee's own Branch (from their Employee record). This is only a fallback for employees who have no Branch set at all - after this, IS Attendance Settings' Clocking Machines mapping is tried as a last resort per checkin's own device. Leave blank to skip straight to that device mapping (or require every employee to have their own Branch, if no device mapping covers them either).",
    "fieldname": "branch",
    "fieldtype": "Link",
-   "in_list_view": 1,
    "label": "Fallback Branch",
    "options": "Branch"
   },
@@ -46,7 +56,7 @@
   },
   {
    "default": "Not Parsed",
-   "description": "Not Parsed: no file attached yet. Missing Information: file parsed, and either nothing or only some of it resolves. Pending Import: everything resolves, ready for Start Import. Importing: the background job is running. Partially Imported: the background job finished, but some rows were still unresolved - the resolvable ones already became real Employee Checkins, Start Import again once the rest are mapped. Completed: fully resolved and submitted. Error: the background job failed after being queued - see Import Log.",
+   "description": "Not Parsed: no file attached yet. Missing Information: file parsed, and either nothing or only some of it resolves. Pending Import: everything resolves, ready for Start Import. Importing: the background job is running - a scheduled watchdog automatically re-queues (or, after repeated stalls, errors) anything still stuck here well past IMPORT_JOB_TIMEOUT, since that always means the job crashed or its worker was killed, never legitimate ongoing work. Partially Imported: the background job finished, but some rows were still unresolved - the resolvable ones already became real Employee Checkins, Start Import again once the rest are mapped. Completed: fully resolved and submitted. Error: the last import attempt failed - see Import Log for why, fix it, then Start Import again.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -132,6 +142,16 @@
    "read_only": 1
   },
   {
+   "default": "0",
+   "description": "How many times recover_stalled_imports() (the scheduled watchdog for a document stuck at \"Importing\" well past IMPORT_JOB_TIMEOUT) has automatically re-queued this document in a row - reset to 0 by any deliberate, human-triggered Start Import. Reaching MAX_STALL_RECOVERY_ATTEMPTS flips this to \"Error\" instead of queuing it again, so a document that keeps stalling surfaces for a person rather than being retried forever.",
+   "fieldname": "stall_recovery_attempts",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Stall Recovery Attempts",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "amended_from",
    "fieldtype": "Link",
    "label": "Amended From",
@@ -145,7 +165,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-09-07 11:00:00.000000",
+ "modified": "2026-09-10 10:30:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Clocking Import",

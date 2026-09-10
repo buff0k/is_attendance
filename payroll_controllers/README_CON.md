@@ -63,7 +63,9 @@ Each cycle (`heartbeat_interval_seconds` in the config, default 60s):
    Paypoints configured in Frappe is skipped with a log warning, not
    silently pulled with a stale list.
 2. For each request whose Company Number matches a **configured and
-   enabled** entry in `sage_employee_puller.json`, connects to that
+   enabled** entry on this controller's own `Sage Remote Controller`
+   record in Frappe (fetched fresh every cycle via
+   `get_remote_controller_config` - see below), connects to that
    Company's own ODBC DSN (`DSN=VIP_Company001;UID=;PWD=;` - blank
    UID/PWD, same connection string the real Excel query tooling already
    uses, confirmed by byte-searching a real Salary Sheet `.xls`'s embedded
@@ -76,9 +78,12 @@ Each cycle (`heartbeat_interval_seconds` in the config, default 60s):
    several bench instances (or a future second Windows host) share the
    same polling endpoint without stepping on each other.
 
-This local config file (`companies` - the DSN mapping) is re-read every
-cycle too, so enabling/disabling a company or changing its DSN doesn't
-need the heartbeat restarted either.
+The Company Number/DSN mapping (`get_remote_controller_config`) is
+re-fetched every cycle too, so enabling/disabling a company or changing
+its DSN in Frappe doesn't need the heartbeat restarted, and each poll also
+stamps that controller's own `Last Heartbeat` there - the Sage Remote
+Controller list view is always the current "who's connected" picture, no
+need to check a log file on the host itself.
 
 **The query, exactly as found** (see the script's own module docstring
 for the full byte-search evidence):
@@ -114,23 +119,22 @@ pick up a Sage-side correction.
   "base_url": "https://eben.isambane.co.za",
   "api_key": "...",
   "api_secret": "...",
-  "heartbeat_interval_seconds": 60,
-  "companies": [
-    { "sage_company_no": "001", "dsn": "VIP_Company001", "enabled": true }
-  ]
+  "heartbeat_interval_seconds": 60
 }
 ```
 
-`companies` is just a local DSN mapping + on/off switch, one entry per
-Sage Company Number this host can serve - nothing else. Paypoints, Branch
-mapping, and the Amt column layout all live on the `Sage Payroll Company`
-doctype in Frappe and are read fresh on every poll, deliberately not
-duplicated here - Frappe is the one source of truth for that data, so a
-Paypoint added, removed, or moved to a different Branch in Frappe takes
-effect on the next poll with nothing local to keep in sync. Adding a new
-site later is just: add its Paypoint on the `Sage Payroll Company` doctype
-in Frappe (only a brand-new *Company Number* - a new DSN - needs an entry
-added here).
+That's the whole local config now - just enough to reach and authenticate
+against this Frappe site. The Company Number/DSN mapping (formerly a
+`companies` block here) now lives on a **Sage Remote Controller** record
+in Frappe (Attendance workspace > Payroll > Sage Remote Controller),
+matched to whichever User `api_key`/`api_secret` above belong to - create
+one there (a Payroll Manager can do this) before running the script.
+Paypoints, Branch mapping, and the Amt column layout still live on the
+`Sage Payroll Company` doctype as before, also read fresh on every poll.
+Adding a new site later is just: add its Paypoint on `Sage Payroll
+Company`, and (only for a brand-new *Company Number* - a new DSN) a row on
+the relevant Sage Remote Controller's own Companies Served table - nothing
+on the Windows host itself needs editing or redeploying either way.
 
 **Run it**: `python sage_employee_puller.py` (needs `pyodbc` and
 `requests` installed, plus the same Sybase SQL Anywhere / iAnywhere ODBC

@@ -37,6 +37,15 @@ scheduler_events = {
 	"daily": [
 		"is_attendance.controllers.attendance_sync.enqueue_daily_sync",
 	],
+	"cron": {
+		# A document can only genuinely still be "Importing" for as long as
+		# IMPORT_JOB_TIMEOUT allows - checking every 15 minutes catches a
+		# real stall reasonably soon after that ceiling, without being so
+		# frequent it's doing real work most ticks find nothing to do.
+		"*/15 * * * *": [
+			"is_attendance.controllers.clocking_import.recover_stalled_imports",
+		],
+	},
 }
 permission_query_conditions = {
 	"Employee Checkin": "is_attendance.permissions.employee_checkin_permission_query_conditions",
