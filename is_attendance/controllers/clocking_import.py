@@ -56,6 +56,7 @@ Every doctype that uses this module must:
 from __future__ import annotations
 
 import re
+import time
 
 import frappe
 from frappe import _
@@ -302,7 +303,7 @@ def apply_resolved_issues(doc) -> set[str]:
 	return newly_resolved
 
 
-def resync_drafts_for_codes(codes: set[str], skip: tuple[str, str] | None = None) -> list[str]:
+def resync_drafts_for_codes(codes: set[str], skip: tuple[str, str] | None = None) -> dict:
 	"""Re-saves every Draft Clocking * Import document (any doctype in
 	IMPORT_ISSUE_DOCTYPES) that currently lists one of `codes` as an
 	unresolved Issue. Its own validate() (validate_import ->
@@ -319,11 +320,27 @@ def resync_drafts_for_codes(codes: set[str], skip: tuple[str, str] | None = None
 	reflects the resolution) and the central Clocking Import Issues
 	page's own bulk resolve action (no single "self" document, so `skip`
 	is left unset). Returns the names of every document actually resaved,
-	for the caller to report back."""
+	for the caller to report back.
+
+	Each document's own save is individually isolated against transient
+	lock contention (a real, confirmed risk here specifically: resolving
+	several codes at once, each shared by several documents, can mean
+	dozens of these saves - each one inserting new Employee Checkins -
+	landing on the same naming-series counter row in close succession).
+	Without this, one document hitting a deadlock/lock-wait-timeout mid
+	loop used to abort the *entire* remaining batch, silently leaving
+	every document after it in the list unresynced - worse than
+	run_import_job()'s own per-document isolation. A few short retries
+	first; if a document still won't save after that, it's skipped (not
+	fatal to the batch) and reported in `failed` for the caller to retry
+	later once contention has eased, rather than losing progress on
+	everything else that would have succeeded fine."""
 	if not codes:
-		return []
+		return {"resynced": [], "failed": []}
 
 	resynced: list[str] = []
+	failed: list[str] = []
+
 	for other_doctype, issue_doctype in IMPORT_ISSUE_DOCTYPES.items():
 		parent_names = frappe.get_all(
 			issue_doctype,
@@ -336,14 +353,23 @@ def resync_drafts_for_codes(codes: set[str], skip: tuple[str, str] | None = None
 			if skip and (other_doctype, parent_name) == skip:
 				continue  # this document already just handled itself
 
-			other_doc = frappe.get_doc(other_doctype, parent_name)
-			if other_doc.docstatus != 0:
-				continue  # only a Draft can still have open Issues
+			for attempt in range(3):
+				try:
+					other_doc = frappe.get_doc(other_doctype, parent_name)
+					if other_doc.docstatus != 0:
+						break  # only a Draft can still have open Issues - not a failure, just nothing to do
 
-			other_doc.save(ignore_permissions=True)
-			resynced.append(parent_name)
+					other_doc.save(ignore_permissions=True)
+					resynced.append(parent_name)
+					break
+				except (frappe.QueryDeadlockError, frappe.QueryTimeoutError):
+					frappe.db.rollback()
+					if attempt == 2:
+						failed.append(parent_name)
+					else:
+						time.sleep(attempt + 1)
 
-	return resynced
+	return {"resynced": resynced, "failed": failed}
 
 
 def resync_drafts_for_codes_job(
@@ -377,8 +403,21 @@ def resync_drafts_for_codes_job(
 	this bench, before even accounting for any OTHER documents fanning
 	out from the same codes)."""
 	skip = (skip_doctype, skip_docname) if skip_doctype and skip_docname else None
-	resync_drafts_for_codes(set(codes), skip=skip)
+	result = resync_drafts_for_codes(set(codes), skip=skip)
 	frappe.db.commit()
+
+	if result["failed"]:
+		# resync_drafts_for_codes() already retried each of these a few
+		# times internally - still failing means contention that outlasted
+		# those retries, not a code bug. Logged so it's visible/traceable
+		# rather than silently dropped; whoever's stuck still shows an open
+		# Issue and will pick up the mapping the next time anything
+		# resaves it (the normal Start Import flow, or another resolve
+		# batch touching the same document), no permanent damage done.
+		frappe.log_error(
+			title="resync_drafts_for_codes_job: some documents still unresynced after retries",
+			message=f"codes={sorted(codes)}\nfailed_documents={result['failed']}",
+		)
 
 
 def rebuild_issues(doc, rows: list[dict]) -> None:
@@ -742,14 +781,7 @@ def run_import_job(doctype: str, docname: str) -> None:
 		# bulk mapping resync, or several CSVs landing together) and their
 		# background jobs running in parallel across multiple workers, all
 		# inserting Employee Checkins and colliding on the same
-		# naming-series counter row. Frappe's own job executor
-		# (frappe.utils.background_jobs.execute_job) already retries
-		# exactly this class of error automatically, up to 5 times with
-		# backoff - but only if it actually sees the exception. Re-raise
-		# instead of parking the document at "Error" so that retry gets
-		# the chance to happen; a file that's perfectly importable
-		# shouldn't need a human to notice and manually re-click "Start
-		# Import" just because it happened to race another import.
+		# naming-series counter row.
 		#
 		# Checking isinstance against Frappe's own QueryDeadlockError/
 		# QueryTimeoutError, not frappe.db.is_deadlocked()/is_timedout() -
@@ -759,13 +791,29 @@ def run_import_job(doctype: str, docname: str) -> None:
 		# gets here (see frappe/database/database.py's own sql()) - calling
 		# is_deadlocked() again on the wrapper compares the wrong thing
 		# (args[0] is the original exception object, not a code) and always
-		# returns False, silently defeating this whole retry path. Confirmed
-		# live: a real error 1020 ("Record has changed since last read in
-		# table 'tabSeries'") - genuine naming-series contention from many
-		# imports becoming ready at once - was landing at "Error" instead of
-		# being retried, exactly because of this mismatch.
+		# returns False, silently defeating this whole retry path.
+		#
+		# Second, since-confirmed bug in this same spot: re-raising the
+		# wrapped error ITSELF (a bare `raise`) does not actually trigger a
+		# retry either. frappe.utils.background_jobs.execute_job's own
+		# retry logic only catches (frappe.db.InternalError,
+		# frappe.RetryBackgroundJobError) - and QueryDeadlockError/
+		# QueryTimeoutError are plain Exception subclasses (see
+		# frappe/exceptions.py), never InternalError, so that except clause
+		# never even matches them; they propagate straight to the job
+		# executor as a genuine unhandled failure, permanently orphaning
+		# the document at "Importing" with nothing to un-stick it - not the
+		# "already retried automatically" outcome this comment used to
+		# assume. Confirmed live: a bulk resync (many imports becoming
+		# ready at once, real error 1020/1213 on the shared Employee
+		# Checkin naming series) produced 170 documents stuck exactly this
+		# way, not one retried. frappe.RetryBackgroundJobError is Frappe's
+		# actual, intended mechanism for this (used the same way in
+		# frappe/core/doctype/user/user.py) - raising it, not the original
+		# error, is what execute_job's retry check is unconditionally
+		# looking for.
 		if isinstance(error, (frappe.QueryDeadlockError, frappe.QueryTimeoutError)):
-			raise
+			raise frappe.RetryBackgroundJobError from error
 
 		# Genuine failure - the "should theoretically not be possible" case:
 		# queue_import() already verified at least one row resolves before
