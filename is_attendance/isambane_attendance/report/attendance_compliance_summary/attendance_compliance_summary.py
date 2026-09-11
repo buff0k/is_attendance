@@ -25,15 +25,23 @@ Day classification, per employee/date:
   used by `ir`'s Shift Designer (``ir_shift_design.get_sa_public_holidays``),
   reused here directly rather than the Frappe "Holiday List" doctype, which
   has to be manually maintained and can silently miss a year), or covered
-  by a *full* Approved Leave Application. Applies uniformly to
-  Weekdays, Saturdays and Sundays alike - a weekend day with zero
-  clocking counts as Missed for every employee, not only those who had a
-  Shift Assignment scheduling them to work it (confirmed with the user -
-  this is deliberately the noisier, more literal interpretation). A half
-  day (``Leave Application.half_day`` + ``half_day_date`` pinpointing this
+  by a *full* Leave Application whose status exempts (``Open`` or
+  ``Approved`` - see ``EXEMPTING_LEAVE_STATUSES``; a still-pending request
+  is treated the same as an approved one, on the assumption it'll go one
+  way or the other). A ``Rejected`` or ``Cancelled`` Leave Application
+  exempts nothing - the employee was expected at work either way - but its
+  ``status`` is still carried through to ``leave_status`` on the daily
+  detail row, so a Missed day caused by one isn't an unexplained flag; it
+  visibly shows *why*. Applies uniformly to Weekdays, Saturdays and
+  Sundays alike - a weekend day with zero clocking counts as Missed for
+  every employee, not only those who had a Shift Assignment scheduling
+  them to work it (confirmed with the user - this is deliberately the
+  noisier, more literal interpretation). A half day
+  (``Leave Application.half_day`` + ``half_day_date`` pinpointing this
   specific date - see ``_get_leave_detail_by_day``) still expects a genuine
-  partial clocking, so Missed still fires on zero punches even on a
-  half-day-leave date; the leave only excuses half the day, not all of it.
+  partial clocking, so Missed still fires on zero punches even on an
+  exempting half-day-leave date; the leave only excuses half the day, not
+  all of it.
 - **No Out / No In**: only meaningful on a day with exactly one clustered
   punch (2+ punches always normalize to having both an IN and an OUT - see
   attendance_sync.py). Which side is missing is read from that single
@@ -201,8 +209,14 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 
 			holiday_name = holidays.get(current)
 			leave_here = leave_detail.get((employee, current))
-			is_half_day_leave = bool(leave_here and leave_here["half_day"])
-			is_full_day_leave = bool(leave_here) and not is_half_day_leave
+			# Open (pending) and Approved both exempt, identically - see
+			# EXEMPTING_LEAVE_STATUSES. Rejected/Cancelled never exempt
+			# anything; leave_status is still carried through below so a
+			# Missed day caused by one of those isn't an unexplained flag.
+			is_exempting_leave = bool(leave_here and leave_here["is_exempting"])
+			is_half_day_leave = is_exempting_leave and leave_here["half_day"]
+			is_full_day_leave = is_exempting_leave and not is_half_day_leave
+			leave_status = leave_here["status"] if leave_here else None
 			day_checkins = checkins_by_day.get((employee, current), [])
 
 			classification = _classify_day(day_checkins, start_time, end_time, threshold_minutes)
@@ -251,6 +265,7 @@ def compute(filters: dict) -> tuple[list[dict], dict[str, list[dict]]]:
 					"public_holiday": holiday_name or "",
 					"on_leave": is_full_day_leave,
 					"half_day_leave": is_half_day_leave,
+					"leave_status": leave_status or "",
 					**flags,
 				}
 			)
@@ -456,22 +471,47 @@ def get_sa_public_holidays(start_date, end_date) -> dict:
 	}
 
 
+# A Leave Application's docstatus/status combination, per HRMS's own
+# on_submit() ("Only Leave Applications with status 'Approved' and
+# 'Rejected' can be submitted" - hrms/hr/doctype/leave_application/
+# leave_application.py): Open sits at docstatus 0 (not yet decided);
+# Approved AND Rejected both reach docstatus 1 (both are "submitted",
+# distinguished only by `status`); Cancelled is docstatus 2. Open and
+# Approved are treated identically here - a pending request means the
+# same "no clocking expected" outcome as an approved one, on the
+# reasonable assumption it'll go one way or the other; Rejected/Cancelled
+# mean the opposite (the employee should have been at work) and are
+# surfaced for context rather than silently dropped, so a Missed day
+# with a rejected/cancelled leave form on file isn't an unexplained flag.
+EXEMPTING_LEAVE_STATUSES = {"Open", "Approved"}
+
+
 def _get_leave_detail_by_day(employees: list[str], from_date, to_date) -> dict[tuple[str, object], dict]:
-	"""Per (employee, date) leave detail for every date covered by an
-	approved Leave Application in range - not just a plain membership set,
-	since a half-day date needs different missed-clocking handling than a
-	full leave day (see compute()'s use of this). Mirrors
-	attendance_sync._get_leave_info's own half_day_date condition exactly:
-	a leave application's half_day/half_day_date fields pinpoint at most
-	ONE date within its own from_date-to_date range as being the half day;
-	every other date in that same application's range is a full leave day.
+	"""Per (employee, date) leave detail for every date covered by ANY
+	Leave Application in range (any status/docstatus except an
+	entirely-discarded draft never submitted at all is still included via
+	status "Open" - see EXEMPTING_LEAVE_STATUSES above) - not just a plain
+	membership set, since a half-day date needs different missed-clocking
+	handling than a full leave day, and a non-exempting status
+	(Rejected/Cancelled) needs to be told apart from an exempting one
+	(see compute()'s use of this). Mirrors attendance_sync._get_leave_info's
+	own half_day_date condition exactly: a leave application's
+	half_day/half_day_date fields pinpoint at most ONE date within its own
+	from_date-to_date range as being the half day; every other date in
+	that same application's range is a full leave day.
+
+	When more than one application covers the same date (a rejected
+	request followed by a fresh approved one, say), an exempting one
+	always wins over a non-exempting one for that date - the most recent
+	application (`order_by="modified desc"`) wins among applications that
+	agree on exempting-or-not, since that's the current state of affairs.
 
 	Fetches directly rather than reusing attendance_sync._get_employee_leave_days
 	because that function only returns a flat (employee, date) membership
-	set (enough for attendance_sync's own daily_sync_attendance worklist,
-	which doesn't need to distinguish half from full) - this report needs
-	the half_day/half_day_date fields themselves, and needs them batched
-	for a specific employee list rather than one query per employee/day."""
+	set of Approved-only leave (enough for attendance_sync's own
+	daily_sync_attendance worklist) - this report needs the
+	half_day/half_day_date fields and every status, batched for a specific
+	employee list rather than one query per employee/day."""
 	if not employees:
 		return {}
 
@@ -479,24 +519,63 @@ def _get_leave_detail_by_day(employees: list[str], from_date, to_date) -> dict[t
 		"Leave Application",
 		filters={
 			"employee": ["in", employees],
-			"docstatus": 1,
-			"status": "Approved",
+			"docstatus": ["!=", 2],  # Cancelled (docstatus 2) fetched separately below - see its own comment
 			"from_date": ("<=", to_date),
 			"to_date": (">=", from_date),
 		},
-		fields=["employee", "leave_type", "half_day", "half_day_date", "from_date", "to_date"],
+		fields=["employee", "leave_type", "status", "half_day", "half_day_date", "from_date", "to_date", "modified"],
+		order_by="modified desc",
 	)
+
+	# A cancelled application's own `status` field may still read "Approved"
+	# or "Rejected" (before_cancel() only forces it to "Cancelled" as part
+	# of the cancel action itself - see leave_application.py - a document
+	# cancelled some other way, or one whose status field was set before
+	# that hook's own save, could still show its pre-cancel status). Docstatus
+	# 2 is the one unambiguous signal for "this application no longer
+	# stands" regardless of what `status` happens to say, so cancelled ones
+	# are fetched as a separate, deliberately status-blind pass and always
+	# treated as non-exempting.
+	cancelled_applications = frappe.get_all(
+		"Leave Application",
+		filters={
+			"employee": ["in", employees],
+			"docstatus": 2,
+			"from_date": ("<=", to_date),
+			"to_date": (">=", from_date),
+		},
+		fields=["employee", "leave_type", "half_day", "half_day_date", "from_date", "to_date", "modified"],
+		order_by="modified desc",
+	)
+	for application in cancelled_applications:
+		application["status"] = "Cancelled"
+	applications += cancelled_applications
 
 	detail: dict[tuple[str, object], dict] = {}
 	for application in applications:
+		is_exempting = application.status in EXEMPTING_LEAVE_STATUSES
 		app_start = max(getdate(application.from_date), getdate(from_date))
 		app_end = min(getdate(application.to_date), getdate(to_date))
 		half_day_date = getdate(application.half_day_date) if cint(application.half_day) and application.half_day_date else None
 
 		current = app_start
 		while current <= app_end:
-			detail[(application.employee, current)] = {
+			key = (application.employee, current)
+			existing = detail.get(key)
+			# First application seen for this date wins outright (query is
+			# already modified-desc, so that's the most recent one) - UNLESS
+			# it's non-exempting and a later (older, since we're iterating
+			# most-recent-first) application for the same date WAS exempting,
+			# in which case the exempting one takes precedence per this
+			# function's own docstring.
+			if existing and (existing["is_exempting"] or not is_exempting):
+				current = add_days(current, 1)
+				continue
+
+			detail[key] = {
 				"leave_type": application.leave_type,
+				"status": application.status,
+				"is_exempting": is_exempting,
 				"half_day": bool(half_day_date and half_day_date == current),
 			}
 			current = add_days(current, 1)

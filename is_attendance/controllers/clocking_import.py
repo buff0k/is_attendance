@@ -61,7 +61,7 @@ import time
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, add_to_date, getdate, now_datetime
+from frappe.utils import add_days, add_to_date, get_datetime, getdate, now_datetime
 
 from is_attendance.controllers.attendance_sync import (
 	recompute_attendance_for_employee_day,
@@ -1001,13 +1001,49 @@ def recover_stalled_imports() -> dict:
 	return {"recovered": recovered, "escalated": escalated}
 
 
+def excluded_checkin_keys(employees: set[str]) -> set[tuple[str, str, str | None]]:
+	"""Every (employee, time, machine_id) a Clocking Adjustment has
+	deliberately excluded - a device punch that was deleted or moved to a
+	different time, which must never come back just because the same
+	source file (or an overlapping one) gets imported again (see
+	Clocking Checkin Exclusion's own module docstring, and Clocking
+	Adjustment's _add_exclusion/_remove_exclusion, which write and clean
+	these up). Batched per distinct employee up front, same reasoning
+	employee_branch_map()/clocking_machine_branch_map() batch their own
+	lookups - exclusions are rare (a handful per employee at most), so
+	scoping by employee alone (no date-range narrowing) is plenty
+	precise without adding real query cost.
+
+	Keyed on str(get_datetime(...)) rather than the raw value on either
+	side - the same datetime-vs-string mismatch class of bug flagged in
+	Clocking Adjustment's own _process_row_on_submit (a parsed row's own
+	`time` and a fetched DB Datetime don't reliably compare equal
+	otherwise)."""
+	if not employees:
+		return set()
+
+	rows = frappe.get_all(
+		"Clocking Checkin Exclusion",
+		filters={"employee": ["in", list(employees)]},
+		fields=["employee", "excluded_time", "machine_id"],
+	)
+	return {(row.employee, str(get_datetime(row.excluded_time)), row.machine_id or None) for row in rows}
+
+
 def create_checkins(doc, rows: list[dict]) -> tuple[int, int, int]:
 	"""Bulk-create Employee Checkins for every row that doesn't already
-	exist (idempotent - dedup key is employee+time+isa_clocking_machine),
-	stamping full provenance (isa_import_doctype/isa_import_reference via
-	Dynamic Link, so any future import type just needs to call this same
-	function - no new custom field required) and recomputing Attendance
-	once per affected employee/day at the end.
+	exist (idempotent - dedup key is employee+time+isa_clocking_machine)
+	AND isn't a punch a Clocking Adjustment deliberately excluded (see
+	excluded_checkin_keys() and Clocking Checkin Exclusion's own module
+	docstring) - without that second check, re-importing the same source
+	file (or an overlapping one) after a person deleted a bad punch or
+	corrected its time would silently resurrect exactly what they fixed,
+	since the normal dedup key no longer matches anything once the
+	checkin's gone or moved. Stamps full provenance
+	(isa_import_doctype/isa_import_reference via Dynamic Link, so any
+	future import type just needs to call this same function - no new
+	custom field required) and recomputes Attendance once per affected
+	employee/day at the end.
 
 	Branch priority per row: the employee's own Employee.branch, then this
 	import's Fallback Branch, then - only if neither of those gives one -
@@ -1029,6 +1065,7 @@ def create_checkins(doc, rows: list[dict]) -> tuple[int, int, int]:
 
 	branches = employee_branch_map(rows)
 	machine_branches = clocking_machine_branch_map()
+	excluded_keys = excluded_checkin_keys(set(branches.keys()))
 
 	# A large file can create thousands of Employee Checkins in this one
 	# loop. Employee Checkin's own after_insert hook would otherwise
@@ -1047,6 +1084,14 @@ def create_checkins(doc, rows: list[dict]) -> tuple[int, int, int]:
 
 			if not employee or not branch:
 				skipped_unresolved += 1
+				continue
+
+			if (employee, str(get_datetime(row.get("time"))), machine_id) in excluded_keys:
+				# A Clocking Adjustment deliberately deleted or moved this
+				# exact punch away (see Clocking Checkin Exclusion) - never
+				# recreate it just because the same source file (or an
+				# overlapping one) is being imported again.
+				skipped += 1
 				continue
 
 			if frappe.db.exists(

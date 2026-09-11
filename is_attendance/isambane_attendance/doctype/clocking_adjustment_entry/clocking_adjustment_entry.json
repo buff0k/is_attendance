@@ -9,6 +9,7 @@
   "checkin",
   "original_time",
   "original_log_type",
+  "original_machine_id",
   "time",
   "log_type",
   "remove"
@@ -41,6 +42,14 @@
    "read_only": 1
   },
   {
+   "description": "Snapshot of the checkin's isa_clocking_machine when this period was loaded - blank for a new row. Needed to record a Clocking Checkin Exclusion with the exact same dedup key create_checkins() itself uses, so a delete or time-correction here survives a later re-import of the same source file.",
+   "fieldname": "original_machine_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Original Machine ID",
+   "read_only": 1
+  },
+  {
    "fieldname": "time",
    "fieldtype": "Datetime",
    "in_list_view": 1,
@@ -68,7 +77,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-09-04 12:00:00.000000",
+ "modified": "2026-09-10 11:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Clocking Adjustment Entry",
