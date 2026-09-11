@@ -452,12 +452,28 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 				const holiday = day.public_holiday
 					? `<span class="indicator-pill blue" style="margin-right: 4px;">${frappe.utils.escape_html(day.public_holiday)}</span>`
 					: "";
+				// on_leave/half_day_leave both cover an Open (pending) request
+				// the same as an Approved one (see attendance_compliance_summary.py's
+				// EXEMPTING_LEAVE_STATUSES) - leave_status refines the label so
+				// "still pending" doesn't read as if it were already decided.
+				const is_pending = day.leave_status === "Open";
 				const on_leave = day.on_leave
-					? `<span class="indicator-pill green" style="margin-right: 4px;">${__("On Leave")}</span>`
+					? `<span class="indicator-pill ${is_pending ? "yellow" : "green"}" style="margin-right: 4px;">${
+							is_pending ? __("Leave (Pending)") : __("On Leave")
+					  }</span>`
 					: "";
 				const half_day_leave = day.half_day_leave
-					? `<span class="indicator-pill orange" style="margin-right: 4px;">${__("Half Day Leave")}</span>`
+					? `<span class="indicator-pill ${is_pending ? "yellow" : "orange"}" style="margin-right: 4px;">${
+							is_pending ? __("Half Day (Pending)") : __("Half Day Leave")
+					  }</span>`
 					: "";
+				// Rejected/Cancelled never exempts anything (a Missed flag above
+				// still fires normally) - shown so that flag isn't an
+				// unexplained "why is this Missed" moment.
+				const non_exempting_leave =
+					!day.on_leave && !day.half_day_leave && day.leave_status
+						? `<span class="indicator-pill red" style="margin-right: 4px;">${__("Leave {0}", [day.leave_status])}</span>`
+						: "";
 
 				return `
 					<tr>
@@ -466,7 +482,7 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 						<td>${day.in_time ? frappe.datetime.get_time(day.in_time) : ""}</td>
 						<td>${day.out_time ? frappe.datetime.get_time(day.out_time) : ""}</td>
 						<td title="${__("Sum of every clock-in/out pair this day, not simply Out minus In - a day with more than one session (e.g. a lunch break) has gaps in between that aren't worked time.")}">${(day.hours_worked || 0).toFixed(2)}</td>
-						<td>${flags}${holiday}${on_leave}${half_day_leave}</td>
+						<td>${flags}${holiday}${on_leave}${half_day_leave}${non_exempting_leave}</td>
 					</tr>
 				`;
 			})

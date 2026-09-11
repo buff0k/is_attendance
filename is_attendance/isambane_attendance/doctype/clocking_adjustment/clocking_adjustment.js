@@ -181,11 +181,29 @@ function cadj_maybe_reload_day_info(frm) {
 	});
 }
 
+// Start Time/End Time/Threshold the "paired but short" row tint uses (see
+// cadj_classify_day) - a static config value, not employee/period-scoped
+// like leave/day info above, so it's fetched once ever per form session
+// rather than re-keyed on every employee/date change.
+function cadj_maybe_reload_hours_settings(frm) {
+	if (frm.__cadj_hours_settings) {
+		return Promise.resolve();
+	}
+
+	return frm.call("get_hours_settings").then((r) => {
+		frm.__cadj_hours_settings = r.message || { start_time: "06:00:00", end_time: "16:00:00", threshold_minutes: 0 };
+	});
+}
+
 // Both context fetches share the exact same set of trigger points (refresh,
 // employee/from_date/to_date change, a fresh Load Checkins) - combined here
 // so every call site fires both instead of only remembering leave info.
 function cadj_maybe_reload_context(frm) {
-	return Promise.all([cadj_maybe_reload_leave_info(frm), cadj_maybe_reload_day_info(frm)]);
+	return Promise.all([
+		cadj_maybe_reload_leave_info(frm),
+		cadj_maybe_reload_day_info(frm),
+		cadj_maybe_reload_hours_settings(frm),
+	]);
 }
 
 function cadj_open_leave_dialog(frm, day_key) {
@@ -441,6 +459,7 @@ function cadj_fetch_and_merge_new_days(frm) {
 					checkin: checkin.name,
 					original_time: checkin.time,
 					original_log_type: checkin.log_type,
+					original_machine_id: checkin.isa_clocking_machine,
 					time: checkin.time,
 					log_type: checkin.log_type,
 					remove: 0,
@@ -605,10 +624,19 @@ function cadj_after_mutation(frm) {
 // half-day-leave date (a single punch is expected, not flagged) closely
 // enough to look consistent with what that report and the Dashboard
 // already show, computed straight from the rows already loaded
-// client-side - no server round trip needed for this.
+// client-side (recomputes live on every edit) - no server round trip
+// needed for this, other than the one-off get_hours_settings() fetch the
+// "short" case below reuses.
+//
+// Five tints: "missing" (red, zero punches), "short" (red, punches paired
+// but the span doesn't cover Start Time+Threshold to End Time-Threshold -
+// same signal as the Dashboard's own Late In/Early Out), "incomplete"
+// (yellow, an odd/unpaired punch), "leave" (grey, an exempting Leave
+// Application covers the day - see get_leave_info()), "ok" (green,
+// everything else).
 // ------------------------------------------------------------------
 
-function cadj_classify_day(day_rows, leave_here) {
+function cadj_classify_day(day_rows, leave_here, hours_settings) {
 	const active = cadj_active_sorted(day_rows);
 	const is_full_leave = !!(leave_here && !leave_here.half_day);
 	const is_half_leave = !!(leave_here && leave_here.half_day);
@@ -633,7 +661,52 @@ function cadj_classify_day(day_rows, leave_here) {
 		return { tint: "incomplete", ends_unpaired: true };
 	}
 
+	// Paired (even count) - not automatically "ok" just because every punch
+	// has a partner. Reuses the exact same signal the Dashboard's own Late
+	// In/Early Out flags use (attendance_compliance_summary.py's
+	// _is_late_in/_is_early_out against Start Time/End Time/Threshold, see
+	// get_hours_settings()) rather than inventing a separate "too short"
+	// notion - a day the Dashboard would flag as Late In or Early Out is
+	// flagged red here too, not shown as a clean "ok". Suppressed on a
+	// half-day-leave date, same reasoning the Dashboard suppresses it there
+	// (reduced hours make the full-day threshold not meaningfully
+	// applicable).
+	if (!is_half_leave && hours_settings) {
+		const first_in = cadj_parse_datetime(active[0].time);
+		const last_out = cadj_parse_datetime(active[active.length - 1].time);
+		const late_in = cadj_is_late_in(first_in, hours_settings.start_time, hours_settings.threshold_minutes);
+		const early_out = cadj_is_early_out(last_out, hours_settings.end_time, hours_settings.threshold_minutes);
+
+		if (late_in || early_out) {
+			return { tint: "short", ends_unpaired: false };
+		}
+	}
+
 	return { tint: "ok", ends_unpaired: false };
+}
+
+function cadj_time_on_date(reference_date, time_str) {
+	const [hour, minute, second] = (time_str || "0:0:0").split(":").map(Number);
+	return new Date(
+		reference_date.getFullYear(),
+		reference_date.getMonth(),
+		reference_date.getDate(),
+		hour || 0,
+		minute || 0,
+		second || 0
+	);
+}
+
+function cadj_is_late_in(punch_time, start_time_str, threshold_minutes) {
+	const cutoff = cadj_time_on_date(punch_time, start_time_str);
+	cutoff.setMinutes(cutoff.getMinutes() + (threshold_minutes || 0));
+	return punch_time > cutoff;
+}
+
+function cadj_is_early_out(punch_time, end_time_str, threshold_minutes) {
+	const cutoff = cadj_time_on_date(punch_time, end_time_str);
+	cutoff.setMinutes(cutoff.getMinutes() - (threshold_minutes || 0));
+	return punch_time < cutoff;
 }
 
 function cadj_compute_global_intervals(frm) {
@@ -717,6 +790,7 @@ function cadj_ensure_style() {
 			border-radius: 6px;
 		}
 		.cadj-roster-row.cadj-row-missing { background: rgba(192, 57, 43, 0.08); }
+		.cadj-roster-row.cadj-row-short { background: rgba(192, 57, 43, 0.08); }
 		.cadj-roster-row.cadj-row-incomplete { background: rgba(212, 160, 23, 0.12); }
 		.cadj-roster-row.cadj-row-ok { background: rgba(46, 139, 87, 0.05); }
 		.cadj-row-label {
@@ -739,6 +813,7 @@ function cadj_ensure_style() {
 			margin-right: 4px;
 		}
 		.cadj-row-status-dot.cadj-row-missing { background: #c0392b; }
+		.cadj-row-status-dot.cadj-row-short { background: #c0392b; }
 		.cadj-row-status-dot.cadj-row-incomplete { background: #d4a017; }
 		.cadj-row-status-dot.cadj-row-ok { background: #2e8b57; }
 		.cadj-row-status-dot.cadj-row-leave { background: #6c757d; }
@@ -961,7 +1036,7 @@ function cadj_render_timeline(frm) {
 		const day_rows = by_day[key] || [];
 		const active = cadj_active_sorted(day_rows);
 		const leave_here = leave_info[key];
-		const classification = cadj_classify_day(day_rows, leave_here);
+		const classification = cadj_classify_day(day_rows, leave_here, frm.__cadj_hours_settings);
 		const starts_unpaired = previous_ended_unpaired;
 
 		const $row = $(`<div class="cadj-roster-row cadj-row-${classification.tint}"></div>`).appendTo($roster);

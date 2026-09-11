@@ -54,6 +54,8 @@ from is_attendance.controllers.attendance_sync import (
 	recompute_attendance_for_employee_day,
 )
 from is_attendance.isambane_attendance.report.attendance_compliance_summary.attendance_compliance_summary import (
+	DEFAULT_END_TIME,
+	DEFAULT_START_TIME,
 	get_sa_public_holidays,
 )
 
@@ -89,7 +91,7 @@ class ClockingAdjustment(Document):
 		checkins = frappe.get_all(
 			"Employee Checkin",
 			filters={"employee": self.employee, "time": ["between", [start, end]]},
-			fields=["name", "time", "log_type"],
+			fields=["name", "time", "log_type", "isa_clocking_machine"],
 			order_by="time asc",
 		)
 
@@ -101,6 +103,7 @@ class ClockingAdjustment(Document):
 					"checkin": checkin.name,
 					"original_time": checkin.time,
 					"original_log_type": checkin.log_type,
+					"original_machine_id": checkin.isa_clocking_machine,
 					"time": checkin.time,
 					"log_type": checkin.log_type,
 					"remove": 0,
@@ -126,7 +129,7 @@ class ClockingAdjustment(Document):
 		return frappe.get_all(
 			"Employee Checkin",
 			filters={"employee": self.employee, "time": ["between", [start, end]]},
-			fields=["name", "time", "log_type"],
+			fields=["name", "time", "log_type", "isa_clocking_machine"],
 			order_by="time asc",
 		)
 
@@ -211,6 +214,24 @@ class ClockingAdjustment(Document):
 
 		return info
 
+	@frappe.whitelist()
+	def get_hours_settings(self) -> dict:
+		"""The same Start Time/End Time/Threshold the Attendance Dashboard's
+		own "Late In"/"Early Out" flags use (attendance_compliance_summary.py's
+		DEFAULT_START_TIME/DEFAULT_END_TIME - this document has no filter UI
+		of its own to override them the way a report run can, so it always
+		uses the plain defaults). Fetched once when the roster loads;
+		cadj_classify_day() in the .js reuses this same start/end/threshold
+		client-side, computed the same way _is_late_in()/_is_early_out() do
+		server-side, so a "paired but short" day gets flagged here on
+		exactly the same terms the Dashboard would flag it as Late In/Early
+		Out - not a second, independently-tuned notion of "short"."""
+		return {
+			"start_time": str(DEFAULT_START_TIME),
+			"end_time": str(DEFAULT_END_TIME),
+			"threshold_minutes": 0,
+		}
+
 	def on_submit(self):
 		affected: set[tuple[str, object]] = set()
 
@@ -245,6 +266,7 @@ class ClockingAdjustment(Document):
 				checkin = frappe.get_doc("Employee Checkin", row.checkin)
 				affected.add((self.employee, getdate(checkin.time)))
 				frappe.delete_doc("Employee Checkin", row.checkin, ignore_permissions=True, force=True)
+				self._add_exclusion(row, "Deleted")
 
 			elif not row.checkin and not row.remove:
 				checkin = frappe.get_doc(
@@ -303,6 +325,14 @@ class ClockingAdjustment(Document):
 				checkin.save(ignore_permissions=True)
 				affected.add((self.employee, getdate(row.time)))
 
+				if get_datetime(row.time) != get_datetime(row.original_time):
+					# Only an actual TIME move needs excluding - a log_type-only
+					# edit leaves the checkin at the exact same (employee, time,
+					# machine) create_checkins() already dedups on, so a
+					# re-import still correctly skips it without any exclusion
+					# needed (see create_checkins()'s own dedup key).
+					self._add_exclusion(row, "Time Corrected")
+
 			# else: genuinely unchanged row, nothing to do.
 
 		except Exception as error:
@@ -330,6 +360,7 @@ class ClockingAdjustment(Document):
 			checkin.insert(ignore_permissions=True)
 			row.db_set("checkin", checkin.name)
 			affected.add((self.employee, getdate(row.original_time)))
+			self._remove_exclusion(row)
 
 		elif not row.original_time and row.checkin:
 			# This row created a brand-new checkin at submit - remove it.
@@ -347,7 +378,43 @@ class ClockingAdjustment(Document):
 				affected.add((self.employee, getdate(row.original_time)))
 				affected.add((self.employee, getdate(row.time)))
 
+				if get_datetime(row.time) != get_datetime(row.original_time):
+					self._remove_exclusion(row)
+
 		# else: unchanged row, nothing to revert.
+
+	# ------------------------------------------------------------------
+	# Clocking Checkin Exclusion bookkeeping - see that doctype's own
+	# module docstring for why this exists.
+	# ------------------------------------------------------------------
+
+	def _add_exclusion(self, row, reason: str) -> None:
+		frappe.get_doc(
+			{
+				"doctype": "Clocking Checkin Exclusion",
+				"employee": self.employee,
+				"excluded_time": row.original_time,
+				"machine_id": row.original_machine_id,
+				"reason": reason,
+				"clocking_adjustment": self.name,
+			}
+		).insert(ignore_permissions=True)
+
+	def _remove_exclusion(self, row) -> None:
+		# Cancelling restores the original punch, so nothing needs
+		# excluding anymore - even if this were left behind it would never
+		# fire again (the primary dedup check in create_checkins() already
+		# finds the now-restored checkin at that same key), but leaving a
+		# stale exclusion around is confusing on its own record, not just
+		# functionally redundant.
+		frappe.db.delete(
+			"Clocking Checkin Exclusion",
+			{
+				"employee": self.employee,
+				"excluded_time": row.original_time,
+				"clocking_adjustment": self.name,
+			},
+		)
 
 	# ------------------------------------------------------------------
 	# Shared

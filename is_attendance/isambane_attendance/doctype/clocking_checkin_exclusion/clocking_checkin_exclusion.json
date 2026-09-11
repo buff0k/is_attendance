@@ -1,0 +1,100 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-10 11:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "excluded_time",
+  "machine_id",
+  "reason",
+  "clocking_adjustment"
+ ],
+ "fields": [
+  {
+   "description": "A device punch - identified the same way create_checkins() dedups (employee + exact time + machine) - that must NEVER be auto-recreated by a future import, because a person deliberately deleted it or moved it to a different time via a Clocking Adjustment. Without this, re-importing the same source file (or an overlapping one) would silently resurrect exactly what was corrected away, since the checkin no longer exists at this key for the normal dedup check to find.",
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "excluded_time",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Excluded Time",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "Blank matches a punch that itself had no machine recorded.",
+   "fieldname": "machine_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Machine ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "reason",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Reason",
+   "options": "Deleted\nTime Corrected",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "The Clocking Adjustment that created this exclusion - removed automatically if that Adjustment is later cancelled (the original punch is restored, so nothing needs excluding anymore).",
+   "fieldname": "clocking_adjustment",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Clocking Adjustment",
+   "options": "Clocking Adjustment",
+   "read_only": 1,
+   "reqd": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-10 11:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Clocking Checkin Exclusion",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1
+  },
+  {
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR User",
+   "share": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
