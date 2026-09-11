@@ -11,8 +11,14 @@
   "send_daily",
   "send_weekly",
   "send_monthly",
+  "ranges_section",
+  "daily_range",
+  "weekly_range",
+  "monthly_range",
   "employees_section",
   "employees",
+  "schedule_section",
+  "employee_schedules",
   "recipients_section",
   "recipients",
   "last_sent_section",
@@ -44,7 +50,7 @@
   },
   {
    "default": "0",
-   "description": "Sends a digest covering yesterday, every day.",
+   "description": "Sends a digest on this cadence - which period it covers is set by Daily Range below, independent of how often it sends (e.g. a Daily send can still cover last month's numbers, refreshed every day).",
    "fieldname": "send_daily",
    "fieldtype": "Check",
    "in_list_view": 1,
@@ -52,7 +58,7 @@
   },
   {
    "default": "0",
-   "description": "Sends a digest covering the 7 days ending yesterday, once a week.",
+   "description": "Sends a digest once a week - which period it covers is set by Weekly Range below.",
    "fieldname": "send_weekly",
    "fieldtype": "Check",
    "in_list_view": 1,
@@ -60,11 +66,43 @@
   },
   {
    "default": "0",
-   "description": "Sends a digest covering the full previous calendar month, once a month.",
+   "description": "Sends a digest once a month - which period it covers is set by Monthly Range below.",
    "fieldname": "send_monthly",
    "fieldtype": "Check",
    "in_list_view": 1,
    "label": "Send Monthly"
+  },
+  {
+   "fieldname": "ranges_section",
+   "fieldtype": "Section Break",
+   "label": "Report Ranges"
+  },
+  {
+   "default": "Yesterday",
+   "depends_on": "eval:doc.send_daily",
+   "description": "The period the Daily digest covers - decoupled from how often it sends, so a Daily send can cover a rolling week/month rather than just yesterday.",
+   "fieldname": "daily_range",
+   "fieldtype": "Select",
+   "label": "Daily Range",
+   "options": "Yesterday\nLast 7 Days\nLast 30 Days\nWeek to Date\nMonth to Date\nPrevious Calendar Week\nPrevious Calendar Month"
+  },
+  {
+   "default": "Last 7 Days",
+   "depends_on": "eval:doc.send_weekly",
+   "description": "The period the Weekly digest covers.",
+   "fieldname": "weekly_range",
+   "fieldtype": "Select",
+   "label": "Weekly Range",
+   "options": "Yesterday\nLast 7 Days\nLast 30 Days\nWeek to Date\nMonth to Date\nPrevious Calendar Week\nPrevious Calendar Month"
+  },
+  {
+   "default": "Previous Calendar Month",
+   "depends_on": "eval:doc.send_monthly",
+   "description": "The period the Monthly digest covers.",
+   "fieldname": "monthly_range",
+   "fieldtype": "Select",
+   "label": "Monthly Range",
+   "options": "Yesterday\nLast 7 Days\nLast 30 Days\nWeek to Date\nMonth to Date\nPrevious Calendar Week\nPrevious Calendar Month"
   },
   {
    "fieldname": "employees_section",
@@ -72,12 +110,24 @@
    "label": "Employees to Watch"
   },
   {
-   "description": "Every digest this group sends covers exactly these Employees - the same Attendance Compliance Summary numbers the report/Dashboard themselves show, scoped to just this list.",
+   "description": "Every digest this group sends covers exactly these Employees. Time Buffer here is per-employee; Start/End Time per day of week live on the Employee Schedule table below.",
    "fieldname": "employees",
    "fieldtype": "Table",
    "label": "Employees",
    "options": "Watch Group Employee",
    "reqd": 1
+  },
+  {
+   "fieldname": "schedule_section",
+   "fieldtype": "Section Break",
+   "label": "Employee Schedule"
+  },
+  {
+   "description": "One row per Employee per day of week - Start Time/End Time that day, or Day Off (excluded from every flag entirely, same as a public holiday - not just a looser threshold). A day/employee combination with no row here falls back to the app-wide default window (06:00-16:00) rather than being skipped.",
+   "fieldname": "employee_schedules",
+   "fieldtype": "Table",
+   "label": "Employee Schedule",
+   "options": "Watch Group Employee Schedule"
   },
   {
    "fieldname": "recipients_section",
@@ -122,7 +172,7 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-11 09:00:00.000000",
+ "modified": "2026-09-12 09:00:00.000000",
  "modified_by": "Administrator",
  "module": "Isambane Attendance",
  "name": "Watch Group",

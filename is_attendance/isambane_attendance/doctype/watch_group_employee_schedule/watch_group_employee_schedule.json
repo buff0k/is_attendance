@@ -1,0 +1,68 @@
+{
+ "actions": [],
+ "creation": "2026-09-12 09:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "employee",
+  "day_of_week",
+  "is_day_off",
+  "start_time",
+  "end_time"
+ ],
+ "fields": [
+  {
+   "fieldname": "employee",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Employee",
+   "options": "Employee",
+   "reqd": 1
+  },
+  {
+   "fieldname": "day_of_week",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Day",
+   "options": "Monday\nTuesday\nWednesday\nThursday\nFriday\nSaturday\nSunday",
+   "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "No clocking expected this day at all - excluded from every compliance flag entirely, the same way a public holiday already is (not just a looser threshold).",
+   "fieldname": "is_day_off",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Day Off"
+  },
+  {
+   "depends_on": "eval:!doc.is_day_off",
+   "fieldname": "start_time",
+   "fieldtype": "Time",
+   "in_list_view": 1,
+   "label": "Start Time"
+  },
+  {
+   "depends_on": "eval:!doc.is_day_off",
+   "fieldname": "end_time",
+   "fieldtype": "Time",
+   "in_list_view": 1,
+   "label": "End Time"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "istable": 1,
+ "links": [],
+ "modified": "2026-09-12 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Watch Group Employee Schedule",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

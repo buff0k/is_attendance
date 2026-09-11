@@ -4,25 +4,31 @@
 """
 Watch Group scheduled digests - a Watch Group (see that doctype's own
 module docstring) names a list of Employees and a list of User recipients
-on up to three independently-toggleable cadences. Each cadence's own
-scheduled entry point below (see hooks.py's scheduler_events - registered
-under the standard "daily"/"weekly"/"monthly" keys, not a custom cron)
-finds every enabled Watch Group with that cadence switched on, computes
-the exact same attendance_compliance_summary.compute() the report/
-Dashboard themselves use (scoped to just that group's own Employees, over
-that cadence's own period), and emails every recipient a short HTML
-summary with the full per-employee Excel workbook
+on up to three independently-toggleable cadences, each with its own,
+independently-chosen Range (Daily Range/Weekly Range/Monthly Range - how
+often a digest sends and what period it covers are two separate choices;
+a Daily send can cover the previous calendar month just as easily as
+yesterday). Each cadence's own scheduled entry point below (see hooks.py's
+scheduler_events - registered under the standard "daily"/"weekly"/
+"monthly" keys, not a custom cron) finds every enabled Watch Group with
+that cadence switched on, computes a summary scoped to just that group's
+own Employees over that cadence's own Range, and emails every recipient a
+short HTML summary with the full per-employee Excel workbook
 (attendance_dashboard._build_workbook - the identical file "Export to
 Excel" produces) attached.
 
-Period per cadence - all trailing, ending yesterday rather than "today",
-so a run firing at any time of day always reports on fully-closed days,
-never a partial one still accumulating checkins:
-
-- Daily: yesterday only.
-- Weekly: the 7 days ending yesterday.
-- Monthly: the full previous calendar month (1st to last day) - the more
-  standard "monthly report" boundary, not a trailing 30 days.
+The summary itself is NOT computed via attendance_compliance_summary.compute()
+- that report uses one global Start Time/End Time/Threshold for every
+employee, every day (see its own module docstring), which can't express
+"Saturday differs from a weekday" or "Sunday is a Day Off for this one
+employee, not for that one" - exactly what Watch Group's own Employee
+Schedule/Time Buffer fields exist for. _compute_group_summary() below
+reuses the same lower-level primitives that report itself uses
+(_classify_day, get_sa_public_holidays, _get_leave_detail_by_day,
+_get_checkins_grouped) directly, per employee per day, against that
+employee's own schedule for that specific weekday - producing the exact
+same summary_rows/daily_detail shape compute() does, so
+_build_workbook()/_build_email_body() work unchanged either way.
 
 One group's own failure (a bad recipient, a transient email error) is
 logged and doesn't stop the rest of that cadence's run - same reasoning
@@ -32,18 +38,28 @@ daily_sync_attendance's own per-employee try/except uses.
 from __future__ import annotations
 
 from datetime import date
+from datetime import time as dt_time
+from datetime import timedelta
 from io import BytesIO
 
 import frappe
 from frappe import _
-from frappe.utils import add_days, get_first_day, get_last_day, getdate, now_datetime
+from frappe.utils import add_days, get_first_day, get_last_day, get_time, getdate, now_datetime
 
 from is_attendance.isambane_attendance.page.attendance_dashboard.attendance_dashboard import (
 	_build_workbook,
 )
 from is_attendance.isambane_attendance.report.attendance_compliance_summary.attendance_compliance_summary import (
+	DAY_TYPES,
+	DEFAULT_END_TIME,
+	DEFAULT_START_TIME,
 	METRICS,
-	compute,
+	_classify_day,
+	_day_type,
+	_get_checkins_grouped,
+	_get_employee_meta,
+	_get_leave_detail_by_day,
+	get_sa_public_holidays,
 )
 
 CADENCES = {
@@ -51,11 +67,22 @@ CADENCES = {
 	"Weekly": "send_weekly",
 	"Monthly": "send_monthly",
 }
+RANGE_FIELD = {
+	"Daily": "daily_range",
+	"Weekly": "weekly_range",
+	"Monthly": "monthly_range",
+}
+DEFAULT_RANGE = {
+	"Daily": "Yesterday",
+	"Weekly": "Last 7 Days",
+	"Monthly": "Previous Calendar Month",
+}
 LAST_SENT_FIELD = {
 	"Daily": "last_daily_sent",
 	"Weekly": "last_weekly_sent",
 	"Monthly": "last_monthly_sent",
 }
+DEFAULT_BUFFER_MINUTES = 15
 
 
 def send_daily_watch_group_digests() -> None:
@@ -87,22 +114,55 @@ def _send_watch_group_digests(cadence: str) -> None:
 			)
 
 
-def _period_for_cadence(cadence: str) -> tuple[date, date]:
+def _resolve_range(range_key: str) -> tuple[date, date]:
+	"""Every range ends no later than yesterday, deliberately - a run
+	firing at any time of day always reports on fully-closed days, never
+	a partial one still accumulating checkins."""
 	today = getdate()
+	yesterday = add_days(today, -1)
 
-	if cadence == "Daily":
-		yesterday = add_days(today, -1)
+	if range_key == "Yesterday":
 		return yesterday, yesterday
 
-	if cadence == "Weekly":
-		return add_days(today, -7), add_days(today, -1)
+	if range_key == "Last 7 Days":
+		return add_days(today, -7), yesterday
 
-	if cadence == "Monthly":
+	if range_key == "Last 30 Days":
+		return add_days(today, -30), yesterday
+
+	if range_key == "Week to Date":
+		this_week_monday = add_days(today, -today.weekday())
+		return this_week_monday, yesterday
+
+	if range_key == "Month to Date":
+		return get_first_day(today), yesterday
+
+	if range_key == "Previous Calendar Week":
+		this_week_monday = add_days(today, -today.weekday())
+		previous_week_monday = add_days(this_week_monday, -7)
+		return previous_week_monday, add_days(previous_week_monday, 6)
+
+	if range_key == "Previous Calendar Month":
 		previous_month_start = get_first_day(today, d_months=-1)
-		previous_month_end = get_last_day(previous_month_start)
-		return previous_month_start, previous_month_end
+		return previous_month_start, get_last_day(previous_month_start)
 
-	raise ValueError(f"Unknown cadence: {cadence}")
+	raise ValueError(f"Unknown range: {range_key}")
+
+
+def _normalize_time_value(value) -> dt_time | None:
+	"""A Frappe "Time" field's own DB value can come back as either a
+	datetime.time or a datetime.timedelta (duration since midnight) -
+	the same confirmed gotcha attendance_sync._combine_date_time's own
+	comment documents (a real Shift Type.start_time hit this live on this
+	site) - normalizing here rather than trusting the caller's own type."""
+	if not value:
+		return None
+	if isinstance(value, timedelta):
+		total_seconds = int(value.total_seconds())
+		return dt_time(hour=(total_seconds // 3600) % 24, minute=(total_seconds // 60) % 60, second=total_seconds % 60)
+	if isinstance(value, dt_time):
+		return value
+	return get_time(value)
 
 
 def _send_one_digest(group_name: str, cadence: str) -> None:
@@ -120,18 +180,19 @@ def _send_one_digest(group_name: str, cadence: str) -> None:
 	if not recipient_emails:
 		return
 
-	from_date, to_date = _period_for_cadence(cadence)
+	range_key = group.get(RANGE_FIELD[cadence]) or DEFAULT_RANGE[cadence]
+	from_date, to_date = _resolve_range(range_key)
 
-	filters = {
-		"employees": employees,
-		"from_date": from_date,
-		"to_date": to_date,
-		# A watched employee who left mid-period should still show for
-		# that period's own digest, not silently vanish from it just
-		# because they're no longer Active today.
-		"include_inactive": 1,
-	}
-	summary_rows, daily_detail = compute(filters)
+	buffers = {row.employee: row.buffer_minutes if row.buffer_minutes is not None else DEFAULT_BUFFER_MINUTES for row in group.employees}
+	schedules: dict[tuple[str, str], dict] = {}
+	for row in group.employee_schedules:
+		schedules[(row.employee, row.day_of_week)] = {
+			"is_day_off": bool(row.is_day_off),
+			"start_time": _normalize_time_value(row.start_time),
+			"end_time": _normalize_time_value(row.end_time),
+		}
+
+	summary_rows, daily_detail = _compute_group_summary(employees, from_date, to_date, schedules, buffers)
 
 	workbook = _build_workbook(summary_rows, daily_detail)
 	buffer = BytesIO()
@@ -160,6 +221,114 @@ def _send_one_digest(group_name: str, cadence: str) -> None:
 
 	frappe.db.set_value("Watch Group", group_name, LAST_SENT_FIELD[cadence], now_datetime())
 	frappe.db.commit()
+
+
+def _compute_group_summary(
+	employees: list[str],
+	from_date,
+	to_date,
+	schedules: dict[tuple[str, str], dict],
+	buffers: dict[str, int],
+) -> tuple[list[dict], dict[str, list[dict]]]:
+	"""Same summary_rows/daily_detail shape attendance_compliance_summary.compute()
+	produces - see this module's own docstring for why it's computed here
+	rather than by calling that function directly.
+
+	`schedules` is keyed (employee, day_of_week name) -> {"is_day_off",
+	"start_time", "end_time"} - a day/employee combination with no entry
+	falls back to DEFAULT_START_TIME/DEFAULT_END_TIME (NOT a Day Off) -
+	an employee/day genuinely never configured shouldn't silently go
+	unchecked. `buffers` is keyed employee -> minutes, falling back to
+	DEFAULT_BUFFER_MINUTES when not set."""
+	if not employees:
+		return [], {}
+
+	employee_meta = _get_employee_meta(employees)
+	holidays = get_sa_public_holidays(from_date, to_date)
+	leave_detail = _get_leave_detail_by_day(employees, from_date, to_date)
+	checkins_by_day = _get_checkins_grouped(employees, from_date, to_date)
+
+	summary_rows = []
+	daily_detail: dict[str, list[dict]] = {}
+
+	for employee in employees:
+		meta = employee_meta.get(employee, {})
+		buffer_minutes = buffers.get(employee, DEFAULT_BUFFER_MINUTES)
+
+		totals = {f"total_{day_type.lower()}s": 0 for day_type in DAY_TYPES}
+		counts = {f"{day_type.lower()}_{metric}": 0 for day_type in DAY_TYPES for metric, _label in METRICS}
+		grand_totals = {f"total_{metric}": 0 for metric, _label in METRICS}
+		detail_rows = []
+
+		current = from_date
+		while current <= to_date:
+			day_type = _day_type(current)
+			totals[f"total_{day_type.lower()}s"] += 1
+
+			weekday_name = current.strftime("%A")
+			schedule = schedules.get((employee, weekday_name)) or {}
+			is_day_off = bool(schedule.get("is_day_off"))
+			start_time = schedule.get("start_time") or DEFAULT_START_TIME
+			end_time = schedule.get("end_time") or DEFAULT_END_TIME
+
+			holiday_name = holidays.get(current)
+			leave_here = leave_detail.get((employee, current))
+			is_exempting_leave = bool(leave_here and leave_here["is_exempting"])
+			is_half_day_leave = is_exempting_leave and leave_here["half_day"]
+			is_full_day_leave = is_exempting_leave and not is_half_day_leave
+			leave_status = leave_here["status"] if leave_here else None
+
+			day_checkins = checkins_by_day.get((employee, current), [])
+			classification = _classify_day(day_checkins, start_time, end_time, buffer_minutes)
+
+			if is_day_off or holiday_name or is_full_day_leave:
+				# A Day Off is excluded from every flag entirely, the same
+				# as a public holiday or a full leave day - not a looser
+				# threshold, genuinely no clocking expected.
+				flags = {"missed": False, "no_out": False, "no_in": False, "late_in": False, "early_out": False}
+			else:
+				flags = {key: classification[key] for key in ("missed", "no_out", "no_in", "late_in", "early_out")}
+				if is_half_day_leave:
+					flags["no_out"] = flags["no_in"] = flags["late_in"] = flags["early_out"] = False
+
+				prefix = day_type.lower()
+				for metric, _label in METRICS:
+					if flags[metric]:
+						counts[f"{prefix}_{metric}"] += 1
+						grand_totals[f"total_{metric}"] += 1
+
+			detail_rows.append(
+				{
+					"date": current,
+					"day": current.strftime("%A"),
+					"day_type": day_type,
+					"in_time": classification["first_in"],
+					"out_time": classification["last_out"],
+					"hours_worked": classification["hours_worked"],
+					"public_holiday": holiday_name or "",
+					"on_leave": is_full_day_leave,
+					"half_day_leave": is_half_day_leave,
+					"leave_status": leave_status or "",
+					**flags,
+				}
+			)
+
+			current = add_days(current, 1)
+
+		summary_rows.append(
+			{
+				"employee": employee,
+				"employee_name": meta.get("employee_name"),
+				"branch": meta.get("branch"),
+				"company": meta.get("company"),
+				**totals,
+				**counts,
+				**grand_totals,
+			}
+		)
+		daily_detail[employee] = detail_rows
+
+	return summary_rows, daily_detail
 
 
 def _build_email_body(group_name: str, cadence: str, from_date, to_date, summary_rows: list[dict]) -> str:
