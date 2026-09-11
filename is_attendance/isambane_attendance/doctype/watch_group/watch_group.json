@@ -1,0 +1,178 @@
+{
+ "actions": [],
+ "autoname": "field:group_name",
+ "creation": "2026-09-11 09:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "group_name",
+  "enabled",
+  "column_break_cadence",
+  "send_daily",
+  "send_weekly",
+  "send_monthly",
+  "employees_section",
+  "employees",
+  "recipients_section",
+  "recipients",
+  "last_sent_section",
+  "last_daily_sent",
+  "column_break_last_sent",
+  "last_weekly_sent",
+  "last_monthly_sent"
+ ],
+ "fields": [
+  {
+   "fieldname": "group_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Group Name",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_cadence",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Sends a digest covering yesterday, every day.",
+   "fieldname": "send_daily",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Send Daily"
+  },
+  {
+   "default": "0",
+   "description": "Sends a digest covering the 7 days ending yesterday, once a week.",
+   "fieldname": "send_weekly",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Send Weekly"
+  },
+  {
+   "default": "0",
+   "description": "Sends a digest covering the full previous calendar month, once a month.",
+   "fieldname": "send_monthly",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Send Monthly"
+  },
+  {
+   "fieldname": "employees_section",
+   "fieldtype": "Section Break",
+   "label": "Employees to Watch"
+  },
+  {
+   "description": "Every digest this group sends covers exactly these Employees - the same Attendance Compliance Summary numbers the report/Dashboard themselves show, scoped to just this list.",
+   "fieldname": "employees",
+   "fieldtype": "Table",
+   "label": "Employees",
+   "options": "Watch Group Employee",
+   "reqd": 1
+  },
+  {
+   "fieldname": "recipients_section",
+   "fieldtype": "Section Break",
+   "label": "Recipients"
+  },
+  {
+   "description": "Every User below receives every digest this group sends, at their own User email address.",
+   "fieldname": "recipients",
+   "fieldtype": "Table",
+   "label": "Recipients",
+   "options": "Watch Group Recipient",
+   "reqd": 1
+  },
+  {
+   "fieldname": "last_sent_section",
+   "fieldtype": "Section Break",
+   "label": "Last Sent"
+  },
+  {
+   "fieldname": "last_daily_sent",
+   "fieldtype": "Datetime",
+   "label": "Last Daily Digest Sent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_last_sent",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_weekly_sent",
+   "fieldtype": "Datetime",
+   "label": "Last Weekly Digest Sent",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_monthly_sent",
+   "fieldtype": "Datetime",
+   "label": "Last Monthly Digest Sent",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-09-11 09:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Isambane Attendance",
+ "name": "Watch Group",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "HR Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "if_owner": 1,
+   "print": 1,
+   "read": 1,
+   "share": 1,
+   "write": 1,
+   "role": "HR User"
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "if_owner": 1,
+   "print": 1,
+   "read": 1,
+   "share": 1,
+   "write": 1,
+   "role": "Payroll User"
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

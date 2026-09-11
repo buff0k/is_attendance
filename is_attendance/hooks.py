@@ -36,6 +36,13 @@ doc_events = {
 scheduler_events = {
 	"daily": [
 		"is_attendance.controllers.attendance_sync.enqueue_daily_sync",
+		"is_attendance.controllers.watch_group_digest.send_daily_watch_group_digests",
+	],
+	"weekly": [
+		"is_attendance.controllers.watch_group_digest.send_weekly_watch_group_digests",
+	],
+	"monthly": [
+		"is_attendance.controllers.watch_group_digest.send_monthly_watch_group_digests",
 	],
 	"cron": {
 		# A document can only genuinely still be "Importing" for as long as
