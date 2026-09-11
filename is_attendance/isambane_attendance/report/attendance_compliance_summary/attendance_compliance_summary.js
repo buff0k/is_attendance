@@ -13,6 +13,13 @@ frappe.query_reports["Attendance Compliance Summary"] = {
 			},
 		},
 		{
+			fieldname: "watch_group",
+			label: __("Watch Group"),
+			fieldtype: "Link",
+			options: "Watch Group",
+			description: __("Restricts to this group's own Employees - combines with Employees/Branch/etc. above, doesn't replace them."),
+		},
+		{
 			fieldname: "company",
 			label: __("Company"),
 			fieldtype: "Link",

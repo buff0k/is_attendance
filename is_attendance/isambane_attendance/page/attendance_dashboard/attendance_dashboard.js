@@ -75,6 +75,15 @@ is_attendance.AttendanceDashboard = class AttendanceDashboard {
 			change: () => this.run(),
 		});
 
+		this.filters.watch_group = this.page.add_field({
+			fieldname: "watch_group",
+			label: __("Watch Group"),
+			fieldtype: "Link",
+			options: "Watch Group",
+			description: __("Restricts to this group's own Employees - combines with Employees/Branch/etc. below, doesn't replace them."),
+			change: () => this.run(),
+		});
+
 		this.filters.company = this.page.add_field({
 			fieldname: "company",
 			label: __("Company"),

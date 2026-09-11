@@ -424,7 +424,24 @@ def _resolve_employees(filters: dict) -> list[str]:
 	elif branches:
 		query_filters["branch"] = ["in", branches]
 
-	return frappe.get_all("Employee", filters=query_filters, pluck="name")
+	resolved = frappe.get_all("Employee", filters=query_filters, pluck="name")
+
+	watch_group = filters.get("watch_group")
+	if watch_group:
+		# ANDed with everything above, same as any other filter here - not a
+		# separate selection mode. A Watch Group names Employees to watch;
+		# it doesn't override branch/company/etc. scoping a user is already
+		# restricted to or has deliberately set.
+		group_employees = set(
+			frappe.get_all(
+				"Watch Group Employee",
+				filters={"parenttype": "Watch Group", "parent": watch_group},
+				pluck="employee",
+			)
+		)
+		resolved = [employee for employee in resolved if employee in group_employees]
+
+	return resolved
 
 
 def _get_employee_meta(employees: list[str]) -> dict[str, dict]:
